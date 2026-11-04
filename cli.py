@@ -1,0 +1,180 @@
+# @owns コマンドライン入口（引数解釈と人間向け表示だけ。処理は service に委譲）
+"""買い物リサーチ CLI。
+
+  python cli.py search "kw1" "kw2" [--min-price N] [--max-price N] [--ng 語] [--pages N] [--mock] [--json]
+  python cli.py compare "kw1" ... [--ply double|single] [--length-m 30] [--desired-quantity 48] [...]
+  python cli.py regular <id> [--regulars PATH] [--mock] [--json]
+
+--mock（または環境変数 SHOPPING_MOCK=1）で架空データを使い、API を呼ばない。
+表示に認証情報・接続元 IP は出さない。商品固有 URL は出す。
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+
+from shopping import service  # noqa: E402
+
+
+def _add_search_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("keywords", nargs="+", help="検索語（1〜5個）")
+    p.add_argument("--min-price", type=int)
+    p.add_argument("--max-price", type=int)
+    p.add_argument("--ng", dest="ng_keyword", help="除外語")
+    p.add_argument("--sort", default="standard")
+    p.add_argument("--pages", type=int, default=1, help="語ごとのページ数（最大3）")
+    _add_common(p)
+
+
+def _add_common(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--mock", action="store_true", help="架空データを使う（API を呼ばない）")
+    p.add_argument("--json", action="store_true", help="JSON で出力")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(prog="cli.py", description="楽天の商品を検索・比較する")
+    sub = ap.add_subparsers(dest="command", required=True)
+    s = sub.add_parser("search", help="候補を検索して一覧表示")
+    _add_search_args(s)
+    s.add_argument("--max-results", type=int, default=30)
+    c = sub.add_parser("compare", help="同じ仕様どうしで比較して最安を出す")
+    _add_search_args(c)
+    c.add_argument("--ply", choices=["single", "double"])
+    c.add_argument("--length-m", type=float)
+    c.add_argument("--desired-quantity", type=int)
+    c.add_argument("--unit", default="ロール")
+    r = sub.add_parser("regular", help="定番品マスタの id で今の最安を調べる")
+    r.add_argument("regular_id")
+    r.add_argument("--regulars", help="定番品マスタのパス（既定 data/regulars.json）")
+    r.add_argument("--pages", type=int, default=1)
+    _add_common(r)
+    return ap
+
+
+def _yen(v) -> str:
+    return "不明" if v is None else f"{v:,}円"
+
+
+def _ship(o: dict) -> str:
+    return {"included": "送料込み", "separate": "送料別", "unknown": "送料不明"}.get(
+        o["shipping_status"], "送料不明")
+
+
+def _qty(o: dict) -> str:
+    q = o.get("quantity") or {}
+    if q.get("confidence") == "high":
+        up = o.get("unit_price")
+        return f"{q['total']}{q['unit']}" + (f"(1{q['unit']}={up:,.2f}円)" if up is not None else "")
+    return "数量不明" if q.get("confidence") == "none" else "数量要確認"
+
+
+def _spec(o: dict) -> str:
+    q = o.get("quantity") or {}
+    ply = {"double": "ダブル", "single": "シングル"}.get(q.get("ply"), "ply不明")
+    ln = f"{q['length_m']:g}m" if q.get("length_m") else "長さ不明"
+    return f"{ply}/{ln}"
+
+
+def _offer_line(o: dict) -> str:
+    mark = "" if o["url_status"] == "ok" else " [URL要確認]"
+    return (f"{_yen(o['price'])} | {o['shop_name'] or '店舗不明'} | {_qty(o)} | {_spec(o)} | "
+            f"{_ship(o)}{mark}\n      {o['name']}\n      {o['url']}")
+
+
+def _print_stats(stats: dict) -> None:
+    print(f"取得 {stats['total_received']} 件 / 重複除去 {stats['duplicates_removed']} 件 / "
+          f"候補 {stats['unique_offers']} 件 / 取得時刻 {stats['fetched_at']}"
+          + (f" / 打ち切り: {stats['stopped_reason']}" if stats.get("stopped_reason") else ""))
+    for k in stats["per_keyword"]:
+        err = f" エラー={k['error']}" if k["error"] else ""
+        print(f"  - {k['keyword']}: API件数 {k['api_count']} / 取得 {k['received']}{err}")
+
+
+def _print_notes(result: dict) -> None:
+    for n in result.get("notes", []):
+        print(f"※ {n}")
+
+
+def render_search(r: dict) -> None:
+    _print_stats(r["stats"])
+    print()
+    for i, o in enumerate(r["offers"], 1):
+        print(f"[{i}] {_offer_line(o)}")
+    print()
+    _print_notes(r)
+
+
+def render_compare(r: dict) -> None:
+    _print_stats(r["stats"])
+    c = r["comparison"]
+    print()
+    for g in c["groups"]:
+        print(f"■ 仕様グループ {g['key']}（{g['count']} 件）")
+        for i, o in enumerate(g["offers"], 1):
+            print(f"  [{i}] {_offer_line(o)}")
+    print()
+    labels = [("cheapest_price", "商品価格が最安"), ("cheapest_unit_price", "単位価格が最安"),
+              ("cheapest_total", "支払総額が最安"), ("cheapest_meeting_quantity", "必要数量を満たす最安")]
+    for key, label in labels:
+        o = c[key]
+        print(f"★ {label}: " + ("（断定できない／該当なし）" if o is None else _offer_line(o)))
+    if c["caveats"]:
+        print("\n断定できない理由・注意:")
+        for cv in c["caveats"]:
+            print(f"  - {cv}")
+    print()
+    _print_notes(r)
+
+
+def run(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    adapter = service.make_adapter(mock=True if args.mock else None)
+    if args.command == "search":
+        result = service.search_products(
+            args.keywords, ng_keyword=args.ng_keyword, min_price=args.min_price,
+            max_price=args.max_price, sort=args.sort, pages=args.pages,
+            max_results=args.max_results, adapter=adapter)
+        render = render_search
+    elif args.command == "compare":
+        spec = {}
+        if args.ply:
+            spec["ply"] = args.ply
+        if args.length_m is not None:
+            spec["length_m"] = args.length_m
+        result = service.compare_offers(
+            args.keywords, spec or None, args.desired_quantity, ng_keyword=args.ng_keyword,
+            min_price=args.min_price, max_price=args.max_price, sort=args.sort,
+            pages=args.pages, unit=args.unit, adapter=adapter)
+        render = render_compare
+    else:
+        result = service.find_regular_item(args.regular_id, regulars_path=args.regulars,
+                                           pages=args.pages, adapter=adapter)
+        render = render_compare
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif not result["ok"]:
+        print(f"エラー: {result['error']['kind']} - {result['error']['message']}", file=sys.stderr)
+    else:
+        if args.command == "regular":
+            reg = result["regular"]
+            print(f"定番品: {reg['name']} (id={reg['id']}) 必要仕様={reg['required_spec']} "
+                  f"希望数量={reg['desired_quantity']}")
+        render(result)
+    return 0 if result["ok"] else 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+    return run(argv)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
