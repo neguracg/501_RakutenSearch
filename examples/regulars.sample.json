@@ -1,0 +1,17 @@
+{
+  "regulars": [
+    {
+      "id": "tp-double-30m",
+      "name": "トイレットペーパー ダブル 30m（架空の見本）",
+      "maker": "架空メーカー",
+      "model_number": null,
+      "jan": null,
+      "required_spec": {"ply": "double", "length_m": 30},
+      "unit": "ロール",
+      "desired_quantity": 48,
+      "keywords": ["トイレットペーパー ダブル 30m", "トイレットペーパー 12ロール"],
+      "known_urls": [],
+      "notes": "見本です。data/regulars.json（git 管理外）にコピーして自分用に書き換える。価格・在庫は保存しない。"
+    }
+  ]
+}
