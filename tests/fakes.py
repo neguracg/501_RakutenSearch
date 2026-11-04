@@ -51,3 +51,30 @@ class FakeOpener:
 
 def http_error(code: int, url="https://example.invalid/x?applicationId=SECRET"):
     return HTTPError(url, code, "msg SECRET", {}, io.BytesIO(b"body SECRET"))
+
+
+class FakeAdapter:
+    """pages[(keyword, page)] = (offers, count) または AdapterError。呼び出しを記録する。"""
+
+    mall = "rakuten"
+
+    def __init__(self, pages):
+        self.pages = pages
+        self.calls = []
+
+    def search(self, keyword, **kw):
+        self.calls.append((keyword, kw))
+        key = (keyword, kw.get("page", 1))
+        r = self.pages.get(key, ([], 0))
+        if isinstance(r, BaseException):
+            raise r
+        offers, count = r
+        # 呼び出しごとに新しい Offer を返す（実 Adapter と同じ）
+        import copy
+        return copy.deepcopy(offers), count
+
+
+def make_offer(code, name="商品", price=1000, **kw):
+    from shopping.models import Offer
+    return Offer(mall="rakuten", mall_item_code=code, item_name=name, price=price,
+                 item_url=f"https://item.rakuten.co.jp/shop/{code}/", item_url_status="ok", **kw)
