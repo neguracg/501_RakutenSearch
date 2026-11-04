@@ -1,0 +1,52 @@
+{
+  "count": 57,
+  "page": 1,
+  "first": 1,
+  "last": 3,
+  "hits": 3,
+  "pageCount": 2,
+  "Items": [
+    {
+      "itemCode": "exshop-a:tp-48",
+      "itemName": "【架空】トイレットペーパー 12ロール×4袋 ダブル 30m 香りなし",
+      "itemPrice": 1980,
+      "itemUrl": "https://item.rakuten.co.jp/exshop-a/tp-48/",
+      "postageFlag": 0,
+      "shopName": "架空堂A",
+      "shopCode": "exshop-a",
+      "availability": 1,
+      "reviewAverage": 4.5,
+      "reviewCount": 120,
+      "pointRate": 1,
+      "itemCaption": "架空の商品説明です。"
+    },
+    {
+      "itemCode": "exshop-b:tp-72",
+      "itemName": "【架空】トイレットペーパー 12R×6 ダブル 30m",
+      "itemPrice": 2680,
+      "itemUrl": "https://item.rakuten.co.jp/exshop-b/tp-72/",
+      "postageFlag": 1,
+      "shopName": "架空商店B",
+      "shopCode": "exshop-b",
+      "availability": 1,
+      "reviewAverage": 4.2,
+      "reviewCount": 33,
+      "pointRate": 2,
+      "itemCaption": ""
+    },
+    {
+      "itemCode": "exshop-c:tp-36",
+      "itemName": "【架空】トイレットペーパー ３６ロール（１２ロール×３パック）シングル 50m",
+      "itemPrice": 1500,
+      "itemUrl": "https://search.rakuten.co.jp/search/mall/exshop-c/",
+      "postageFlag": 0,
+      "shopName": "架空屋C",
+      "shopCode": "exshop-c",
+      "availability": 0,
+      "reviewAverage": 0,
+      "reviewCount": 0,
+      "pointRate": 1,
+      "itemCaption": "シングルです"
+    }
+  ]
+}

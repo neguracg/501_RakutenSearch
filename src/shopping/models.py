@@ -1,3 +1,4 @@
+# @owns Offer/QuantityInfo/SearchStats等のデータ形
 """データモデル。不明は None（推測で埋めない）。"""
 from __future__ import annotations
 

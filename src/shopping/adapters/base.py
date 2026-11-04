@@ -1,3 +1,4 @@
+# @owns モールAdapterの共通契約とAdapterError
 """モール Adapter の共通インターフェースとエラー型。"""
 from __future__ import annotations
 

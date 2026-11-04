@@ -1,0 +1,22 @@
+{
+  "count": 1,
+  "page": 1,
+  "hits": 1,
+  "pageCount": 1,
+  "items": [
+    {
+      "itemCode": "exshop-a:tp-48",
+      "itemName": "【架空】トイレットペーパー 12ロール×4袋 ダブル 30m 香りなし",
+      "itemPrice": 1980,
+      "itemUrl": "https://item.rakuten.co.jp/exshop-a/tp-48/",
+      "postageFlag": 0,
+      "shopName": "架空堂A",
+      "shopCode": "exshop-a",
+      "availability": 1,
+      "reviewAverage": 4.5,
+      "reviewCount": 120,
+      "pointRate": 1,
+      "itemCaption": "架空の商品説明です。"
+    }
+  ]
+}

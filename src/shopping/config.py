@@ -1,3 +1,4 @@
+# @owns 認証情報の読み込み（.env/環境変数）
 """認証情報の読み込み。.env または環境変数から。値は repr/str に出さない。"""
 from __future__ import annotations
 
