@@ -200,3 +200,9 @@ def test_offers_without_price_are_not_ranked():
     r = compare([off("a", None, 36), off("b", 1000, 36)])
     assert r.cheapest_price.mall_item_code == "b"
     assert any("価格が不明" in c for c in r.caveats)
+
+
+def test_unit_price_requires_high_even_if_total_is_set():
+    o = off("a", 1000, 48)
+    o.quantity.confidence = "low"   # total が入っていても high 以外は単価を出さない
+    assert o.quantity.total == 48 and unit_price(o) is None
