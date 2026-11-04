@@ -10,11 +10,12 @@
 
 ## 説明ページ
 
-GitHub Pagesで main ブランチの /docs を公開する予定。
-公開URL: https://neguracg.github.io/501_RakutenSearch/
+GitHub Pagesで master ブランチの /docs を公開する予定。
+公開予定URL（未検証）: https://neguracg.github.io/501_RakutenSearch/
 静的ページのソース: docs/index.html
 
 ## 秘密情報
 
 APIキー・アプリID・接続元IP・商品データ・個人情報をコミットしない。
 本体はWindows / Pythonを予定。公開ページからAPIを呼び出さない。
+
