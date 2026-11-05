@@ -1,5 +1,5 @@
-"""AC-Q1: 実在らしい題名コーパス（tests/corpus/ の title_patterns 232件・unseen1_patterns 71件・unseen2_patterns 40件
-＝計343件。verifier 作成の真値つき）の回帰。
+"""AC-Q1: 実在らしい題名コーパス（tests/corpus/ の title_patterns 232件・unseen1_patterns 71件・unseen2_patterns 40件・unseen3_patterns 40件
+＝計383件。verifier 作成の真値つき）の回帰。
 
 採点は tests/corpus/compare.py の grade と同じ規則:
   - 高信頼（high）で真値と違う（WRONG）・曖昧な題名を高信頼で返す（RISK）・例外（EXC）は 0 件であること。
@@ -15,7 +15,8 @@ import pytest
 
 from shopping.quantity import parse_quantity
 
-CORPUS_FILES = {"title_patterns": 232, "unseen1_patterns": 71, "unseen2_patterns": 40}
+CORPUS_FILES = {"title_patterns": 232, "unseen1_patterns": 71, "unseen2_patterns": 40,
+                "unseen3_patterns": 40}
 
 
 def _load(name):
@@ -30,7 +31,11 @@ CORPUS = [pair for name in CORPUS_FILES for pair in _load(name)]
 MAX_UNKNOWN_RATIO = 0.20
 
 # 真値が SPEC と矛盾する題名（真値は変えない）。題名 → 理由
-XFAIL: dict[str, str] = {}
+XFAIL: dict[str, str] = {
+    # 既知の限界 R2（SPEC §7）: 「串」は数え語の表に無く、「1本50g」だけを読んで 1 本×50g の high にしてしまう
+    "焼き鳥 国産 鶏もも串 20串 冷凍 BBQ キャンプ 焼くだけ 1本50g 業務用":
+        "R2: 表に無い数え語（串）の個数が落ち、別の数え語（1本50g）が個数の根拠になる",
+}
 
 
 def grade(truth, title):
@@ -67,7 +72,7 @@ def _case(title, truth):
 
 def test_corpus_is_the_expected_size_and_xfail_titles_exist():
     assert {n: len(_load(n)) for n in CORPUS_FILES} == CORPUS_FILES
-    assert len(CORPUS) == 343
+    assert len(CORPUS) == 383
     titles = {t for t, _ in CORPUS}
     assert set(XFAIL) <= titles
 

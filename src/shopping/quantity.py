@@ -231,9 +231,16 @@ _IRI_AFTER = re.compile(r"\s*入")
 # P5: 数え語の直後に文字（かな・漢字・英字・長音）が続く時、個数にしてよいのは次の語の時だけ。それ以外
 # （お・ご・同・目・付・プ・指・刃・口・所・骨・タ・長音…）は個数にしない。語ごとの除外リストは持たない
 _COUNTER_BOUNDARY_WORDS = re.compile(r"(?:x|入|セット|パック|組|ケース|箱|袋|梱|set|pack)")
-# P5 で捨てた数が総数と食い違うと low にする規則（P5 の末尾）の対象外: 期間・販促・還元で、個数の候補ではないと
-# 分かっているもの（12ヶ月保証・3点以上・2点購入・10P還元・5Pアップ）。捨てる判定そのものには使わない
-_KNOWN_NOT_COUNT = re.compile(r"(?:月|購入|以上|まで|で|還元|倍|up|アップ|ポイント|増量)")
+# P5 で捨てた数が総数と食い違うと low にする規則（P5 の末尾）の対象外。SPEC §7 P5 補足が例示する3型の「数え語＋続く語」の
+# 組だけを持つ（期間・販促・還元で、個数の候補ではないと分かっているもの）。数え語（正規化後の別名）ごとに引く。
+# 組に無いもの（「6個で1000円」「30本ポイント10倍」）は捨てた数として検査する。捨てる判定そのものには使わない
+_KNOWN_NOT_COUNT: dict[str, re.Pattern[str]] = {
+    "ヶ": re.compile("月"), "ケ": re.compile("月"),                                    # 12ヶ月保証
+    "点": re.compile("(?:購入|以上|まで|で)"),                                          # 2点購入・3点以上・2点で
+    "p": re.compile("(?:還元|倍|up|アップ|ポイント|増量)"),                              # 10P還元・5Pアップ
+}
+# _AFTER_SKIP のうち、数え語の直後にあると購入条件・上限になる語（捨てた数の検査の対象にする）
+_LIMIT_WORDS = re.compile(r"(?:以上|まで)")
 _BARE_RE = re.compile(r"(?:[×*]|(?<![a-z])x)\s*(\d+)(?![\d.]|[a-z])")
 # 数字の直後に続く語（表にあるかどうかは別途判定する）
 _WORD_AFTER_NUM = re.compile(r"(?<![\d.,])(\d{1,9})([^\W\d_]+)")
@@ -263,6 +270,12 @@ def _counter_boundary_ok(s: str, end: int) -> bool:
     return _COUNTER_BOUNDARY_WORDS.match(s, end) is not None
 
 
+def _is_known_not_count(counter: str, s: str, end: int) -> bool:
+    """P5 の捨てた数の検査から外す「数え語＋続く語」の組か（_KNOWN_NOT_COUNT）。counter は正規化後の別名。"""
+    known = _KNOWN_NOT_COUNT.get(counter)
+    return bool(known and known.match(s, end))
+
+
 def _is_link_position(s: str, start: int, end: int) -> bool:
     """P6: 個数の連結位置か（×・入数の直後、または直後に×が続く）。"""
     return bool(_UNK_BEFORE.search(s[:start]) or _UNK_AFTER.match(s, end))
@@ -282,7 +295,13 @@ def _tokens(s: str, flags: list[str], dropped: list[float]) -> list[_Tok]:
         times = prev == "x" and ((a > 1 and not s[a - 2].isascii()) or (toks and toks[-1].end == a - 1))
         if prev and not times and ((prev.isascii() and prev.isalpha()) or prev in "-_./"):
             continue
-        if _AFTER_SKIP.match(s, m.end()) or _BEFORE_SKIP.search(s[max(0, a - 4):a]):
+        skipped = _AFTER_SKIP.match(s, m.end())
+        if skipped or _BEFORE_SKIP.search(s[max(0, a - 4):a]):
+            # 「6個以上」「6個まで」の数は購入条件・上限で個数ではない。ただし捨てた数としては検査する（P5 と同じ。A4）
+            if (skipped and m.group("counter") and _LIMIT_WORDS.match(skipped.group().strip())
+                    and _digits_ok(m.group("num")) and _num(m.group("num")) == int(_num(m.group("num")))
+                    and not _is_known_not_count(m.group("counter"), s, m.end())):
+                dropped.append(_num(m.group("num")))
             continue
         ok = _digits_ok(m.group("num"))
         if ok is None:
@@ -303,7 +322,7 @@ def _tokens(s: str, flags: list[str], dropped: list[float]) -> list[_Tok]:
             word = counters[key]
             # 個数として採らない理由（P5 境界・小数・単独 P の上限）。連結位置なら黙って捨てず low（P6）
             if not _counter_boundary_ok(s, m.end()) or value != int(value):
-                if value == int(value) and not _KNOWN_NOT_COUNT.match(s, m.end()):
+                if value == int(value) and not _is_known_not_count(key, s, m.end()):
                     dropped.append(value)
                 if link:
                     flags.append("dropped_link")
