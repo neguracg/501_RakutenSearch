@@ -62,7 +62,7 @@ def web(client, path, params):
 
 
 def mcp(client, tool, args):
-    args = dict({"pages": 1}, **args)    # 既定の pages は 3 ページ（回数制限の重み 3）。この表は 1 回=1 回分で数えたいので 1 に固定する
+    args = dict({"pages": 1}, **args)    # 既定の pages は 3 ページ。この表は取得量を 1 ページに固定する（回数制限は pages に依らず 1 回=1 回分）
     body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": args}}
     r = client.post("/mcp", json=body, headers=dict(RPC_HEADERS, **{"CF-Connecting-IP": IP}))
     assert r.status_code == 200, r.text

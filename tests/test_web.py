@@ -151,7 +151,7 @@ def test_web_screen_has_no_paging_notes_and_charges_one_per_search():
     clock = Clock()
     lim = RateLimiter(limit=3, clock=clock)
     c, _, _ = make_client("", adapter=fake(pages), limiter=lim)
-    for path in ("/search", "/compare", "/search"):                # Web は 1 回=1 回分（MCP の既定 pages=3 とは別）
+    for path in ("/search", "/compare", "/search"):                # Web も MCP も 1 回=1 回分
         r = c.get(path + "?q=洗濯洗剤")
         assert r.status_code == 200 and "start_page" not in r.text and "続きは" not in r.text
     assert c.get("/search?q=洗濯洗剤").status_code == 429

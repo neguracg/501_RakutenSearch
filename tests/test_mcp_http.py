@@ -181,7 +181,7 @@ def test_find_regular_item_is_not_callable_on_public_endpoint():
 
 def test_mcp_shares_the_same_rate_limit_and_cache_as_web():
     app, ad = make_app("/kaimono", limit=2)
-    one = {"keywords": ["洗濯洗剤"], "pages": 1}                # 1 回=1 回分で数える（既定の pages は 3 で重み 3）
+    one = {"keywords": ["洗濯洗剤"], "pages": 1}                # 1 回=1 回分で数える（pages では重み付けしない）
     with TestClient(app) as tc:
         outs = [data(rpc(tc, "/kaimono", "search_products", one, ip="203.0.113.7"))
                 for _ in range(3)]
@@ -402,28 +402,29 @@ def test_public_no_keywords_times_pages_limit(keywords, pages_n):
     assert len(ad.calls) == len(keywords)                      # 空の応答なので各語 1 ページ目で止まる
 
 
-def test_public_rate_limit_counts_pages_as_weight_and_omitted_as_the_default_three():
-    # 20 回/分の窓で pages=3 は 3 回分: 6 回通って 7 回目（合計 21 回分）が弾かれる
+def test_public_rate_limit_counts_one_per_call_regardless_of_pages():
+    # pages=100・既定(省略=3)・pages=1 のどれも 1 回分。20 回/分の窓で 20 回通って 21 回目が弾かれる
     app, _ = make_app("", adapter=FakeAdapter(many_pages()), limit=20)
+    ip = "203.0.113.80"
     with TestClient(app) as tc:
-        outs = [data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"], "pages": 3}, ip="203.0.113.80"))
-                for _ in range(7)]
-        one = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"], "pages": 1}, ip="203.0.113.80"))
-        omitted = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"]}, ip="203.0.113.80"))  # 省略=3 回分
-    assert [o["ok"] for o in outs] == [True] * 6 + [False]
-    assert outs[6]["error"]["kind"] == "rate_limited"
-    assert one["ok"] is True                                   # 18 回分使用済み・残り 2 回分で pages=1(1 回分)は通る
-    assert omitted["error"]["kind"] == "rate_limited"          # 19 回分使用済み・残り 1 回分では、省略(3 回分)は通らない
+        outs = [data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"], "pages": 100}, ip=ip))
+                for _ in range(10)]
+        outs += [data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"]}, ip=ip)) for _ in range(5)]   # 省略
+        outs += [data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"], "pages": 1}, ip=ip))
+                 for _ in range(5)]
+        over = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"], "pages": 1}, ip=ip))
+    assert [o["ok"] for o in outs] == [True] * 20
+    assert over["error"]["kind"] == "rate_limited"
 
 
-def test_pages_weight_is_clamped_to_the_limit_so_a_single_call_can_always_pass():
+def test_public_rate_limit_limit_2_passes_two_big_pages_calls_and_rejects_the_third():
     app, _ = make_app("", adapter=FakeAdapter(many_pages()), limit=2)
+    ip = "203.0.113.81"
     with TestClient(app) as tc:
-        big = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"], "pages": 3}, ip="203.0.113.81"))
-        # limit=2 では pages=3 は 2 回分に丸めて 1 回は通す（永久に通らなくならない）
-        again = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"]}, ip="203.0.113.81"))
-    assert big["ok"] is True
-    assert again["error"]["kind"] == "rate_limited"
+        outs = [data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"], "pages": 100}, ip=ip))
+                for _ in range(3)]
+    assert [o["ok"] for o in outs] == [True, True, False]
+    assert outs[2]["error"]["kind"] == "rate_limited"
 
 
 def test_public_compare_offers_does_not_cut_groups_at_10_and_web_still_does():

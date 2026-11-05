@@ -126,44 +126,41 @@ def test_no_keywords_times_pages_limit_any_more(n, pages):
     validate(keywords=[f"k{i}" for i in range(n)], pages=pages)
 
 
-def test_rate_limiter_weight_counts_pages_and_rejection_consumes_nothing():
+def test_rate_limiter_counts_one_per_hit_and_rejection_consumes_nothing():
     t = [0.0]
-    lim = RateLimiter(limit=5, window=60, clock=lambda: t[0])
-    lim.hit("ip", 3)
-    lim.hit("ip", 2)                                   # 合計 5 回分でちょうど満杯
-    with pytest.raises(RateLimited):
-        lim.hit("ip", 1)
-    t[0] = 61
-    lim.hit("ip", 3)                                   # 窓を出たので通る
+    lim = RateLimiter(limit=2, window=60, clock=lambda: t[0])
+    lim.hit("ip")
+    lim.hit("ip")                                      # 2 回でちょうど満杯
     with pytest.raises(RateLimited) as e:
-        lim.hit("ip", 3)                               # 3+3 > 5 -> 弾く（数えない）
+        lim.hit("ip")                                  # 弾く（数えない）
     assert e.value.retry_after >= 1
-    lim.hit("ip", 2)                                   # 弾いた分は消費していない: 3+2=5
+    t[0] = 61
+    lim.hit("ip")                                      # 窓を出たので通る
+    lim.hit("ip")                                      # 弾いた分は消費していない: 1+1=2
 
 
-def test_rate_limiter_weight_larger_than_limit_is_clamped_so_one_call_can_pass():
-    lim = RateLimiter(limit=2, window=60, clock=lambda: 0.0)
-    lim.hit("ip", 3)
+def test_admit_counts_one_per_call_regardless_of_pages():
+    # pages の大きさ・省略・明示 None に関わらず 1 呼び出し＝1 回（楽天側の 1 秒 1 回は GuardedAdapter の直列化で守る）
+    gate = Gate(FakeAdapter({}), RateLimiter(limit=2, window=60, clock=lambda: 0.0))
+    gate.admit("ip", **OK, pages=100)
+    gate.admit("ip", **OK, pages=None)
     with pytest.raises(RateLimited):
-        lim.hit("ip", 1)
-
-
-def test_admit_charges_pages_and_default_is_three():
-    gate = Gate(FakeAdapter({}), RateLimiter(limit=10, window=60, clock=lambda: 0.0))
-    gate.admit("ip", **OK)                             # pages 省略 = 既定の 3 回分
-    gate.admit("ip", **OK, pages=None)                 # 明示 None も 3 回分（計 6）
-    gate.admit("ip", **OK, pages=4)                    # 計 10
+        gate.admit("ip", **OK, pages=100)
+    other = Gate(FakeAdapter({}), RateLimiter(limit=3, window=60, clock=lambda: 0.0))
+    other.admit("ip", **OK)                            # 省略（既定 3 ページ）も 1 回
+    other.admit("ip", **OK, pages=1)
+    other.admit("ip", **OK, pages=50)
     with pytest.raises(RateLimited):
-        gate.admit("ip", **OK, pages=1)
+        other.admit("ip", **OK, pages=1)
 
 
-def test_admit_start_page_does_not_change_the_weight_but_range_is_checked_first():
-    gate = Gate(FakeAdapter({}), RateLimiter(limit=3, window=60, clock=lambda: 0.0))
-    gate.admit("ip", **OK, start_page=50, pages=2)     # 重みは pages=2
+def test_admit_start_page_range_is_checked_first_and_does_not_consume_a_hit():
+    gate = Gate(FakeAdapter({}), RateLimiter(limit=2, window=60, clock=lambda: 0.0))
+    gate.admit("ip", **OK, start_page=50, pages=2)     # 1 回
     for _ in range(5):
         with pytest.raises(InvalidInput):
             gate.admit("ip", **OK, start_page=99, pages=3)   # 範囲外は回数を消費しない
-    gate.admit("ip", **OK, pages=1)                    # 2+1=3 でちょうど満杯
+    gate.admit("ip", **OK, pages=1)                    # 2 回目でちょうど満杯
     with pytest.raises(RateLimited):
         gate.admit("ip", **OK, pages=1)
 

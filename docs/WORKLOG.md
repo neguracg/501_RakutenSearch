@@ -63,3 +63,4 @@
 - 2026-11-06 WP8-3: 文書同期（SPEC §7 P0 の徹底・R4・§11 入力検査の1文字の語・AC-W10 / BUGLOG A5 と HTTP 400 の2行 / DECISIONS 打ち止めの解除 / HANDOFF 件数: pytest 2693・コーパス390 不明73=18.7%）
 - 2026-11-06 WP8-4: verifier 指摘 B1-B3/C1/C3 を修正（/ の後ろの 1<数え語>・後置の 1ケースN本入り・最大N回分は high に戻し、択一(または/or/〜)・から/以下/以内/未満・MAX を low に。コーパス399 不明73=18.3%・誤り0 / pytest 2733 passed・ブラインド 416/416）
 - 2026-11-06 WP8-5: verifier 指摘 B4-B6（択一は標識を挟む時だけ・個数1のからは候補にしない・MAX/MIN は語境界つき）/ コーパス407 誤り0(xfail1)・不明73=17.9% / pytest 2760 passed・ブラインド 416/416。WP8 の規則変更はここで打ち止め
+- 2026-11-06 回数制限の pages 重み付けを撤去（変更分類A: 本番で pages=20 の1回が rate_limited になった。重みは出典の無い制約で『必要な件数を頼めば渡す』と矛盾。楽天の1秒1回は GuardedAdapter の直列化で守る）: RateLimiter.hit/Gate.check から weight を撤去し Gate.admit は1呼び出し1回、試験を『pages に依らず1回分』（limit=2 で pages=100 を2回通り3回目が rate_limited）に置換、SPEC 244・263 行更新 / pytest 2832 passed

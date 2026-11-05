@@ -133,10 +133,8 @@ class RateLimiter:
         self._hits: dict[str, deque] = {}
         self._lock = threading.Lock()
 
-    def hit(self, key: str, weight: int = 1) -> None:
-        """1 回の呼び出しを weight 回分として数える（pages 回楽天 API を叩く呼び出しは pages 回分）。
-        weight が limit を超えても空いていれば 1 回は通す（limit に丸める）。"""
-        weight = max(1, min(int(weight), self._limit))
+    def hit(self, key: str) -> None:
+        """1 回の呼び出しを 1 回として数える（pages で重み付けしない。楽天側の 1 秒 1 回は GuardedAdapter の直列化で守る）。"""
         now = self._clock()
         with self._lock:
             if len(self._hits) > self._max_keys:
@@ -145,10 +143,9 @@ class RateLimiter:
             d = self._hits.setdefault(key, deque())
             while d and now - d[0] > self._window:
                 d.popleft()
-            if len(d) + weight > self._limit:
-                oldest_to_expire = d[len(d) + weight - self._limit - 1]   # これが窓から出れば weight 回分が空く
-                raise RateLimited(max(1, int(self._window - (now - oldest_to_expire)) + 1))
-            d.extend([now] * weight)
+            if len(d) >= self._limit:
+                raise RateLimited(max(1, int(self._window - (now - d[0])) + 1))
+            d.append(now)
 
 
 class Gate:
@@ -158,15 +155,15 @@ class Gate:
         self.adapter = adapter if isinstance(adapter, GuardedAdapter) else GuardedAdapter(adapter)
         self.limiter = limiter or RateLimiter(limit=_env_int("RATE_LIMIT_PER_MIN", RATE_LIMIT_PER_MIN))
 
-    def check(self, ip: str | None, weight: int = 1) -> None:
-        """回数制限。超えたら RateLimited。weight は 1 呼び出しが叩く API の回数（= pages）。"""
-        self.limiter.hit(ip or "unknown", weight)
+    def check(self, ip: str | None) -> None:
+        """回数制限。超えたら RateLimited。"""
+        self.limiter.hit(ip or "unknown")
 
     def admit(self, ip: str | None, **fields) -> None:
         """公開面（Web と MCP）の入口。先に入力を検査し（不正なら inputs.InvalidInput）、通ったものだけ回数を数える。
         ロック取得・最小間隔のスリープ・API 呼び出しより前に置くので、弾いた入力は API 枠を消費しない。"""
         inputs.validate(**fields)
-        self.check(ip, inputs.check_pages(fields.get("pages")))    # 重み＝取得ページ数（省略は既定の 3）。楽天側は直列化で守られる
+        self.check(ip)                                             # 1 呼び出し＝1 回（pages で重み付けしない。楽天側は直列化で守る）
 
 
 def _env_int(name: str, default: int) -> int:
