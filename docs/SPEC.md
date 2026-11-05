@@ -46,7 +46,7 @@ Offer: mall, shop_name, shop_code, mall_item_code, item_name, price（税込・�
 shipping_included（true / false / null）, shipping_fee（円 / null。楽天の検索 API では常に null）,
 shipping_status（included / separate / unknown）, availability（true / false / null）,
 points_rate, review_average, review_count, coupon（null。Phase 1 は取得しない）,
-item_url（商品固有 URL）, fetched_at（ISO8601・JST）, quantity（§7）, unit_price・unit_price_label（§8。比較が書き込む）
+item_url（商品固有 URL）, fetched_at（ISO8601・JST）, quantity（§7）, unit_price・unit_price_label・unit_price_dimension（§8。比較が書き込む）
 
 ## 5. 楽天 Adapter
 
