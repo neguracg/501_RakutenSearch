@@ -37,3 +37,4 @@
 - 2026-11-05 WP4-1: SPEC §7・§8 に S1〜S11・W1〜W5 を追記し、quantity.py(回分・言い直し・総量併記・数え語P/pc/ダース等・2段・桁数・未知数え語low・表整合)と pricing.py(語の数字境界・basis次元・filter_by_terms)を修正、inputs(UTF-8 128バイト・check_basis/check_desired_quantity 一本化)/service/rakuten も連動 / pytest 740 passed（ブラインド 220/220）
 - 2026-11-05 WP4-2: B4 公開入口4×入力項目の未固定セルを試験で固定(tests/test_wp4_cells.py。MCP compare の ng_keyword・価格、basis・desired_quantity の回数無消費×MCP/Web、service 省略既定モック)、C19 GET /mcp 405 に締切、basis/desired_quantity の検査を inputs に一本化 / pytest 932 passed, 31 skipped(入口に無い項目のセル)（ブラインド 220/220。自己変異 17件中17件で赤）
 - 2026-11-05 WP4-3: S8〜S10 の Web・CLI・MCP・README・SPEC(一覧でも含む/除く語、basis は一覧で不使用の表示、全角42文字の文言、指数表記なし・小さな単価の桁増し)、BUGLOG A1(!重)・B1・B2・B3 / pytest 932 passed（ブラインド 220/220）
+- 2026-11-05 WP5-0: 一致原則(P0〜P4)の母集団をブラインドに追記(既存220件は不変) / 392件

@@ -1283,3 +1283,207 @@ def test_units_have_no_duplicate_keys_after_nfkc_casefold():
     keys = [unicodedata.normalize("NFKC", k).casefold() for k in quantity.UNITS]
     dup = {k for k in keys if keys.count(k) > 1}
     assert not dup, dup
+
+
+# ==========================================================================
+# WP5-0 追記: plans/WP5_consensus_quantity.md の P0〜P4（上の既存 220 件は変えない）
+# 新しい Q:
+#   X1 既存試験が P3 と矛盾する: 「ティッシュ 12P」(→12)・「ケーキ 6ヶ」(→6)・「ギフト 5点」(→5)・
+#      COUNT_WORDS の「テスト商品 12回分」(→12) は、P3（P・ヶ・点・回分 は個数の連結位置でだけ
+#      数え語）だと数え語にならない。指示は「既存は変えない」なので触っていない。再固定の判断が要る。
+#   X2 P1 の「等しい後続・括弧内」が別語（「12ロール×4パック(48個)」）でも言い直しか。
+#      P0 の読み（単独の個数 48 も同じ総数を指す）で 48 と固定した。
+#   X3 P2 「2因子以上の鎖」の後ろに積と無関係な数え語付きの数が残る場合
+#      （「12ロール×4パック 5冊」）は high/low が一意でないので試験しない。
+#   X4 P4 の「外側が容器語でない同数」（「3個入り 3冊」）は一意でないので試験しない。
+#   X5 P3 の「入数の直後」の P/ヶ/点 は具体例が指示書に無いので試験しない（×の直後と N点セットだけ）。
+# ==========================================================================
+
+# --- P0/P1/P2 母集団: {×付き, ×無し} × 総数の書き方 × 総数の数え語 × 内容量 × 一致/不一致 ----
+
+_P_CHAINS = {"x": "12ロール×4パック", "space": "12ロール 4パック"}  # 積 12*4=48
+_P_WRITINGS = {
+    "paren": "({t})",
+    "space": " {t}",
+    "kei": " 計{t}",
+    "goukei": " 合計{t}",
+    "zen": " 全{t}",
+    "eq": "={t}",
+}
+_P_COUNTERS = {"inner": "ロール", "outer": "パック", "other": "個"}
+
+
+def _p_text(chain, writing, counter, with_content, total):
+    t = f"{total}{_P_COUNTERS[counter]}"
+    body = _P_CHAINS[chain] + _P_WRITINGS[writing].format(t=t)
+    if with_content:
+        sep = "×" if chain == "x" else " "
+        return f"トイレットペーパー 75m{sep}{body}"
+    return f"トイレットペーパー {body}"
+
+
+_P_GRID = [
+    (c, w, k, m)
+    for c in _P_CHAINS
+    for w in _P_WRITINGS
+    for k in _P_COUNTERS
+    for m in (False, True)
+]
+_P_IDS = [f"{c}-{w}-{k}-{'content' if m else 'nocontent'}" for c, w, k, m in _P_GRID]
+
+
+@pytest.mark.parametrize("chain,writing,counter,with_content", _P_GRID, ids=_P_IDS)
+def test_p1_restated_total_equal_to_product_is_high(chain, writing, counter, with_content):
+    # P0/P1: 総数の言い直しが積(12*4=48)と等しい → 因子にせず 48 のまま high。
+    # 内容量あり: 75m × 48 = 3600m
+    text = _p_text(chain, writing, counter, with_content, 48)
+    q = _parse(text)
+    assert _conf(q) == "high", text
+    assert q.count_total == 48, text
+    if with_content:
+        assert q.content_dimension == "length" and q.content_unit == "m"
+        assert q.content_amount == pytest.approx(75)
+        assert q.measure_total == pytest.approx(3600)
+    else:
+        assert q.content_amount is None and q.measure_total is None
+
+
+@pytest.mark.parametrize("chain,writing,counter,with_content", _P_GRID, ids=_P_IDS)
+def test_p0_restated_total_different_from_product_is_low(chain, writing, counter, with_content):
+    # P0: 候補の1つでも食い違えば low（単価不明）。積は 48、言い直しは 50
+    text = _p_text(chain, writing, counter, with_content, 50)
+    q = _parse(text)
+    assert _conf(q) == "low", text
+    assert q.count_total is None, text
+    assert q.measure_total is None, text
+
+
+P1_EXAMPLES = [
+    # (text, count_total, content_amount or None, measure or None)
+    ("トイレットペーパー 12ロール×4パック(48ロール)", 48, None, None),
+    ("コピー用紙 64枚×3パック(192枚)", 192, None, None),  # 64*3=192
+    ("納豆 45g×3パック×16個 (48パック)", 48, 45, 2160),  # 3*16=48、45*48=2160
+]
+
+
+@pytest.mark.parametrize("text,count,amount,measure", P1_EXAMPLES, ids=[c[0] for c in P1_EXAMPLES])
+def test_p1_examples_from_spec(text, count, amount, measure):
+    q = _parse(text)
+    assert _conf(q) == "high", text
+    assert q.count_total == count
+    if amount is None:
+        assert q.measure_total is None
+    else:
+        assert q.content_amount == pytest.approx(amount)
+        assert q.measure_total == pytest.approx(measure)
+
+
+def test_p1_restated_vs_plain_offers_have_equal_unit_price():
+    # 言い直しの有無で単価が変わらない: 4800円/(48*75m)=1.3333円/m
+    a = "トイレットペーパー 75m×12ロール×4パック(48ロール)"
+    b = "トイレットペーパー 75m×12ロール×4パック"
+    r = _compare([_offer(a, 4800), _offer(b, 4800)])
+    _assert_single_group(r, (a, b), "m", "length", "1mあたり")
+    _assert_up(r, a, 4800 / 3600)
+    _assert_up(r, b, 4800 / 3600)
+
+
+def test_p0_mismatching_restatement_never_becomes_cheapest():
+    # 食い違う言い直し(50)は単価不明に倒れ、最安判定に入らない（安い値段でも）
+    bad = "トイレットペーパー 75m×12ロール×4パック(50ロール)"
+    good = "トイレットペーパー 75m×12ロール×4パック"
+    r = _compare([_offer(bad, 100), _offer(good, 4800)])
+    assert [o.item_name for o in r.unknown_offers] == [bad]
+    assert r.cheapest_unit_price.item_name == good
+
+
+# --- P4 容器語の同数 ----------------------------------------------------------
+
+P4_CASES = [
+    # (text, count_total, content_amount or None, measure or None)
+    ("牛乳 3個入り 400ml×3セット", 9, 400, 3600),  # 同じ数でも外側が容器語 → 3*3
+    ("お菓子 6本入り 6パック", 36, None, None),
+    ("ジュース 4個入 4ケース", 16, None, None),
+    ("ゼリー 5個入り 5箱", 25, None, None),
+    ("ゼリー 8個入り 8袋", 64, None, None),
+    # P1 が優先: 積(3*3=9)と等しい後続は言い直し
+    ("ゼリー 3個入り 3セット 9セット", 9, None, None),
+]
+
+
+@pytest.mark.parametrize("text,count,amount,measure", P4_CASES, ids=[c[0] for c in P4_CASES])
+def test_p4_same_number_with_container_outer_is_multiplied(text, count, amount, measure):
+    q = _parse(text)
+    assert _conf(q) == "high", text
+    assert q.count_total == count
+    if amount is None:
+        assert q.measure_total is None
+    else:
+        assert q.content_amount == pytest.approx(amount)
+        assert q.measure_total == pytest.approx(measure)
+
+
+# --- P3 文脈の要る数え語 ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "モニター 27インチ 1080P",
+        "ウェブカメラ 60P 対応",
+        "ポイント10P還元",
+        "2点購入でクーポン",
+        "プリンター 12ヶ月保証",
+        "プロテイン 3ヶ月分",
+    ],
+)
+def test_p3_non_quantity_phrases_are_none(text):
+    # 数量にしない: 1080P/60P(解像度・fps)、10P還元(ポイント)、2点購入、12ヶ月保証、3ヶ月分
+    q = _parse(text)
+    assert _conf(q) == "none", text
+    assert q.count_total is None and q.measure_total is None
+
+
+@pytest.mark.parametrize(
+    "text,count,amount",
+    [
+        ("洗濯洗剤 詰め替え 900g×6袋 12ヶ月保証", 6, 900),
+        ("洗濯洗剤 詰め替え 900g×6袋 3ヶ月分", 6, 900),
+        ("ミネラルウォーター 500ml×24本 10P還元", 24, 500),
+        ("天然水 2L×6本 2点購入でクーポン", 6, 2000),
+        ("ミネラルウォーター 500ml×24本 1080P", 24, 500),
+        ("単3電池 40本 60P", 40, None),
+    ],
+)
+def test_p3_noise_phrases_do_not_change_a_real_quantity(text, count, amount):
+    q = _parse(text)
+    assert _conf(q) == "high", text
+    assert q.count_total == count
+    if amount is not None:
+        assert q.content_amount == pytest.approx(amount)
+
+
+@pytest.mark.parametrize(
+    "text,count",
+    [
+        ("タオル 3点セット", 3),  # N点セット
+        ("みかん 5個入×3ヶ", 15),  # ×の直後のヶ
+        ("ティッシュ 5箱×12P", 60),  # ×の直後のP
+        ("単3電池 8本入×3P", 24),
+    ],
+)
+def test_p3_counters_in_count_position_still_count(text, count):
+    q = _parse(text)
+    assert _conf(q) == "high", text
+    assert q.count_total == count
+
+
+def test_p3_noise_does_not_create_a_false_cheapest():
+    # 「10P還元」「12ヶ月保証」を個数に読むと単価が狂う。真の100mlあたり:
+    # a 2400/12000*100=20, b 2000/12000*100=16.667 (最安)
+    a = "天然水 500ml×24本 10P還元"
+    b = "天然水 500ml×24本 12ヶ月保証"
+    r = _compare([_offer(a, 2400), _offer(b, 2000)])
+    _assert_up(r, a, 20)
+    _assert_up(r, b, 2000 / 12000 * 100)
+    assert r.cheapest_unit_price.item_name == b
