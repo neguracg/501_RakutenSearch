@@ -1,5 +1,5 @@
-"""AC-Q1: 実在らしい題名コーパス（tests/corpus/ の title_patterns 232件・unseen1_patterns 71件・unseen2_patterns 40件・unseen3_patterns 40件
-＝計383件。verifier 作成の真値つき）の回帰。
+"""AC-Q1: 実在らしい題名コーパス（tests/corpus/ の title_patterns 232件・unseen1_patterns 71件・unseen2_patterns 40件・unseen3_patterns 40件・unseen4_patterns 7件（E2E 実題名 T1〜T7）
+＝計390件。verifier 作成の真値つき）の回帰。
 
 採点は tests/corpus/compare.py の grade と同じ規則:
   - 高信頼（high）で真値と違う（WRONG）・曖昧な題名を高信頼で返す（RISK）・例外（EXC）は 0 件であること。
@@ -16,7 +16,8 @@ import pytest
 from shopping.quantity import parse_quantity
 
 CORPUS_FILES = {"title_patterns": 232, "unseen1_patterns": 71, "unseen2_patterns": 40,
-                "unseen3_patterns": 40}
+                "unseen3_patterns": 40,
+                "unseen4_patterns": 7}
 
 
 def _load(name):
@@ -72,7 +73,7 @@ def _case(title, truth):
 
 def test_corpus_is_the_expected_size_and_xfail_titles_exist():
     assert {n: len(_load(n)) for n in CORPUS_FILES} == CORPUS_FILES
-    assert len(CORPUS) == 383
+    assert len(CORPUS) == 390
     titles = {t for t, _ in CORPUS}
     assert set(XFAIL) <= titles
 
