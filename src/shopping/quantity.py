@@ -619,18 +619,18 @@ def parse_quantity(text: str, basis: str | None = None) -> QuantityInfo:
         return _low(s.strip()[:80])
     if not toks:
         return _none()
-    # WP9 E1: 採用した量と同じ表記（80L）が、英数字の語（ICBK80L）の内側にも現れる。独立した量なのか型番の一部なのか
-    # 決められないので low（P0）。型番だけの題名（独立した 80L が無い）は従来どおり量にしない
-    if embedded:
-        seen = {("measure", t.dim, round(t.n, 9)) if t.kind == "measure" else ("count", t.word, int(t.n))
-                for t in toks if t.kind in ("measure", "count")}
-        if any(e in seen for e in embedded):
-            return _low(s.strip()[:80])
     # 「30回分」は使用回数・換算の説明。計量値や他の個数があれば数えない（S1）
     if any(t.kind == "count" and t.word in SERVING_WORDS for t in toks) and any(
             t.kind == "measure" or (t.kind == "count" and t.word not in SERVING_WORDS) for t in toks):
         toks = [t for t in toks if not (t.kind == "count" and t.word in SERVING_WORDS)]
     groups = _group(s, toks, flags)
+    # WP9 E1（B8 で限定）: 採用した内容量が、×・入・空白の連結で個数などとつながらず「単独」で立ち、同じ量が英数字の語
+    # （ICBK80L）の内側にも現れる時は、独立した量か型番の一部か決められないので low（P0）。鎖の一部（PET500ml 500ml×24本・
+    # 500ml 24本）は型番の言い直しとして普通に書かれるので掛けない。個数は対象外（SN12R … 12ロール は言い直し）。
+    # 型番だけの題名（独立した 80L が無い）は従来どおり量にしない
+    if embedded and any(len(g.toks) == 1 and g.toks[0].kind == "measure"
+                        and ("measure", g.toks[0].dim, round(g.toks[0].n, 9)) in embedded for g in groups):
+        return _low(s.strip()[:80])
     evidence = " / ".join(dict.fromkeys(s[g.toks[0].start:g.toks[-1].end].strip() for g in groups))
     if flags and groups:                 # 食い違い・倍数の落ち（P0: 失敗の向きは単価不明）
         return _low(evidence)
