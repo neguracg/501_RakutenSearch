@@ -15,6 +15,9 @@ class QuantityInfo:
     length_m: float | None       # 1単位あたりの長さ(m)
     confidence: str              # "high" / "low" / "none"
     evidence: str                # 根拠にした文字列（無ければ ""）
+    # 倍巻き・長尺の表記（"x2" "x1.5" "multi"=倍率不明の倍巻き "long"=ロング/長尺）。
+    # 長さの基準が通常品と違うので比較グループを分ける。表記が無ければ None。
+    length_label: str | None = None
 
 
 @dataclass

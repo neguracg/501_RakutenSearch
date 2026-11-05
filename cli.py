@@ -76,6 +76,9 @@ def _spec(o: dict) -> str:
     q = o.get("quantity") or {}
     ply = {"double": "ダブル", "single": "シングル"}.get(q.get("ply"), "ply不明")
     ln = f"{q['length_m']:g}m" if q.get("length_m") else "長さ不明"
+    label = q.get("length_label")
+    if label:
+        ln += f"({'倍巻き・長尺表記' + ('' if label in ('multi', 'long') else ' ' + label)})"
     return f"{ply}/{ln}"
 
 

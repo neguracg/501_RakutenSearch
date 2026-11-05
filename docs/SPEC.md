@@ -53,9 +53,9 @@ item_url（商品固有 URL）, fetched_at（ISO8601・JST）, quantity（後述
 - エンドポイント: `https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701`
 - 認証: クエリ `applicationId`、ヘッダー `accessKey`。`formatVersion=2`。
 - 応答の商品配列は **`Items`（大文字）で返ることを 2026-11-04 の実通信で確認**。`items` / `Items` の両方を受け、どちらも無ければエラー。
-- 送料: `postageFlag` 0=送料込み、1=送料別。実額は API から得られないので shipping_fee は null。
+- 送料: `postageFlag` 0=送料込み、1=送料別（楽天公式 IchibaItem Search の出力項目で 2026-11-05 に確認）。実額は API から得られないので shipping_fee は null。フラグを正とし、タイトルの「送料無料」「送料別」等の文字で送料を決めない。タイトルとフラグが食い違う候補は注意（notes / caveats と各候補の shipping_title_conflict）に出す。
 - 条件: keyword, NGKeyword（除外語）, minPrice/maxPrice, sort（standard / +itemPrice / -itemPrice / -reviewCount 等）, page, hits（1〜30）, availability。
-- 商品固有 URL は `https://item.rakuten.co.jp/<shop>/<item>/` 形式であること。検索画面 URL を商品 URL として扱わない。形式に合わない URL は item_url_status=needs_review を付けて残す（捨てない・作らない）。
+- 商品 URL は API が返したまま使う（`?rafcid=...` 等のクエリは楽天が API 経由の流入を数える値なので外さない・改変しない）。商品固有 URL は `https://item.rakuten.co.jp/<shop>/<item>/` 形式であること。検索画面 URL を商品 URL として扱わない。形式に合わない URL は item_url_status=needs_review を付けて残す（捨てない・作らない）。
 - エラー: 403 / 429 / timeout / ネットワーク / 不正 JSON を個別の種別で返す。429 はその検索全体を打ち切る（再試行ループしない）。
 - 秘密情報: URL・ヘッダー・例外メッセージをログや戻り値に出さない。
 
@@ -71,7 +71,7 @@ item_url（商品固有 URL）, fetched_at（ISO8601・JST）, quantity（後述
 商品名・説明から、比較の基準単位（例: ロール）あたりの数量を抽出する。
 
 - 例: `12ロール×4袋` → 総 48 ロール、`12ロール×3パック` → 36、`12R×6` → 72。
-- 付随仕様: シングル / ダブル、1 ロールの長さ（m）、倍巻き表記。
+- 付随仕様: シングル / ダブル、1 ロールの長さ（m）、倍巻き・長尺表記（length_label: `x2` `x1.5` `multi`=倍率不明 `long`=ロング/長尺。「ポイント10倍」等の販促表記は倍巻きとしない）。倍巻き・長尺の実長は確定させず length_m は null。
 - 結果には confidence（high / low / none）と根拠文字列を持たせる。矛盾する表記が複数ある・読み取れない場合は総数を null にする。
 - 単価計算に使うのは confidence=high のみ。
 
@@ -86,7 +86,8 @@ item_url（商品固有 URL）, fetched_at（ISO8601・JST）, quantity（後述
 
 規則:
 - 送料が不明（shipping_status=unknown または separate で実額 null）の候補がある時、「総額最安」と断定しない。結果に caveats として理由を書く。
-- シングル / ダブル・長さ・型番が違う商品は同じ比較グループに入れない（誤統合しない）。
+- シングル / ダブル・長さ・型番が違う商品は同じ比較グループに入れない（誤統合しない）。グループ鍵は ply・length_m・unit に加え、倍巻き・長尺の length_label（表記が無ければ付けない）。長さ不明の通常品と倍巻き・長尺品、倍率の違う倍巻き同士は別グループ。
+- 全体の「単位価格が最安」は、通常表記の候補があるなら倍巻き・長尺品を判定から外し、外した件数を caveats に書く（倍巻きだけの時は倍巻きどうしで順位付けする）。
 - 単価は円・小数 2 桁で丸める（表示用）。比較は丸める前の値で行う。
 
 ## 9. 定番品マスタ（regulars.py）

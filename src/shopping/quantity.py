@@ -37,9 +37,33 @@ def _detect_ply(s: str) -> str | None:
     return found.pop() if len(found) == 1 else None
 
 
-def _detect_length(s: str) -> float | None:
+# 「ポイント10倍」「10倍ポイント」等の販促表記を倍巻きと取り違えない
+_PROMO_BEFORE = re.compile(r"ポイント|point|pt|還元|エントリー|spu|の日|つく日|キャンペーン|セール|"
+                           r"イベント|買い回り|最大|倍デー|(?<![a-z])p\s*$")
+_PROMO_AFTER = re.compile(r"\s*(?:ポイント|pt|point|還元|デー|day|アップ|up)")
+
+
+def _detect_length_label(s: str) -> str | None:
+    """倍巻き・長尺の表記を "x2" / "x1.5" / "multi" / "long" で返す。無ければ None。"""
+    m = re.search(r"(\d+(?:\.\d+)?)\s*倍\s*(?:巻|長|ロング)", s)
+    if m:
+        return f"x{float(m.group(1)):g}"
+    if re.search(r"倍\s*(?:巻|長)", s):
+        return "multi"
+    for m in re.finditer(r"(?<![\d.])(\d+(?:\.\d+)?)\s*倍", s):
+        if _PROMO_BEFORE.search(s[max(0, m.start() - 10):m.start()]):
+            continue
+        if _PROMO_AFTER.match(s, m.end()):
+            continue
+        return f"x{float(m.group(1)):g}"
+    if re.search(r"ロング|長尺", s):
+        return "long"
+    return None
+
+
+def _detect_length(s: str, label: str | None = None) -> float | None:
     # 倍巻き等は「長さ」の意味が商品ごとに違う（実長か通常比か）ので確定させない
-    if re.search(r"\d+(?:\.\d+)?\s*倍\s*(?:巻|長|ロング)|倍\s*(?:巻|長)|ロング", s):
+    if label is not None:
         return None
     values = set()
     for m in re.finditer(r"(?<![\d.])(\d+(?:\.\d+)?)\s*(?:メートル|m(?![a-z]))", s):
@@ -52,7 +76,8 @@ def parse_quantity(text: str, unit: str = "ロール") -> QuantityInfo:
     s = _normalize(text)
     U = _unit_pattern(unit)
     ply = _detect_ply(s)
-    length = _detect_length(s)
+    label = _detect_length_label(s)
+    length = _detect_length(s, label)
 
     # 「24ロール分」「24ロール相当」は実数ではなく換算の説明なので数えない
     s_count = re.sub(rf"\d+\s*{U}\s*(?:分|相当)", " ", s)
@@ -97,7 +122,8 @@ def parse_quantity(text: str, unit: str = "ロール") -> QuantityInfo:
         cands = weak
     if not cands:
         return QuantityInfo(unit=unit, per_pack=None, pack_count=None, total=None,
-                            ply=ply, length_m=length, confidence="none", evidence="")
+                            ply=ply, length_m=length, confidence="none", evidence="",
+                            length_label=label)
 
     totals = {c[0] for c in cands}
     evidence = " / ".join(dict.fromkeys(c[3] for c in cands))
@@ -105,7 +131,9 @@ def parse_quantity(text: str, unit: str = "ロール") -> QuantityInfo:
                       for c in cands)
     if len(totals) != 1 or implausible:
         return QuantityInfo(unit=unit, per_pack=None, pack_count=None, total=None,
-                            ply=ply, length_m=length, confidence="low", evidence=evidence)
+                            ply=ply, length_m=length, confidence="low", evidence=evidence,
+                            length_label=label)
     best = next((c for c in cands if not c[4]), cands[0])
     return QuantityInfo(unit=unit, per_pack=best[1], pack_count=best[2], total=best[0],
-                        ply=ply, length_m=length, confidence="high", evidence=evidence)
+                        ply=ply, length_m=length, confidence="high", evidence=evidence,
+                        length_label=label)

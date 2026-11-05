@@ -15,6 +15,7 @@ class ComparisonGroup:
     ply: str | None
     length_m: float | None
     offers: list[Offer]               # 単位価格の安い順（算出不能は末尾）
+    length_label: str | None = None   # 倍巻き・長尺の表記（"x2" 等）。通常品とは別の束にする
 
 
 @dataclass
@@ -57,16 +58,18 @@ def price_per_m(offer: Offer) -> float | None:
     return up / q.length_m
 
 
-def group_key(offer: Offer) -> tuple[str | None, float | None, str]:
+def group_key(offer: Offer) -> tuple[str | None, float | None, str, str | None]:
+    """(ply, length_m, unit, length_label)。倍巻き・長尺は length_label で通常品と分ける。"""
     q = offer.quantity
     if q is None:
-        return (None, None, "")
-    return (q.ply, q.length_m, q.unit)
+        return (None, None, "", None)
+    return (q.ply, q.length_m, q.unit, q.length_label)
 
 
-def _key_str(ply, length_m, unit) -> str:
+def _key_str(ply, length_m, unit, length_label=None) -> str:
     length = "unknown" if length_m is None else f"{length_m:g}m"
-    return f"{ply or 'unknown'}|{length}|{unit or 'unknown'}"
+    base = f"{ply or 'unknown'}|{length}|{unit or 'unknown'}"
+    return f"{base}|{length_label}" if length_label else base
 
 
 def _length_matches(actual: float | None, wanted) -> bool:
@@ -139,12 +142,12 @@ def compare(offers: list[Offer], required_spec: dict | None = None,
     for o in candidates:
         buckets.setdefault(group_key(o), []).append(o)
     groups: list[ComparisonGroup] = []
-    for (ply, length_m, unit), members in buckets.items():
+    for (ply, length_m, unit, label), members in buckets.items():
         members.sort(key=lambda o: (unit_price(o) is None, unit_price(o) or 0.0,
                                     o.price if o.price is not None else 10**12,
                                     o.mall_item_code))
-        groups.append(ComparisonGroup(key=_key_str(ply, length_m, unit), ply=ply,
-                                      length_m=length_m, offers=members))
+        groups.append(ComparisonGroup(key=_key_str(ply, length_m, unit, label), ply=ply,
+                                      length_m=length_m, offers=members, length_label=label))
     groups.sort(key=lambda g: (-len(g.offers), g.key))
 
     if not priced:
@@ -155,19 +158,28 @@ def compare(offers: list[Offer], required_spec: dict | None = None,
     cheapest_price = min(priced, key=lambda o: (o.price, o.mall_item_code))
 
     with_unit = [o for o in priced if unit_price(o) is not None]
-    cheapest_unit = min(with_unit, key=lambda o: (unit_price(o), o.price, o.mall_item_code)) \
-        if with_unit else None
+    # 倍巻き・長尺は 1 ロールの長さが通常品と違い、ロール単価では比べられない。
+    # 通常表記の候補があるなら、全体の「単位価格が最安」の判定から外す
+    plain_unit = [o for o in with_unit if group_key(o)[3] is None]
+    pool = plain_unit if plain_unit else with_unit
+    cheapest_unit = min(pool, key=lambda o: (unit_price(o), o.price, o.mall_item_code)) \
+        if pool else None
+    if plain_unit and len(plain_unit) != len(with_unit):
+        caveats.append(f"倍巻き・長尺の表記がある候補 {len(with_unit) - len(plain_unit)} 件は、"
+                       "1ロールの長さが通常品と違うため単位価格の最安の判定から外した"
+                       "（別の比較グループで見ること）")
     if len(priced) != len(with_unit):
         caveats.append(f"入り数を確定できず単位価格を出せない候補 {len(priced) - len(with_unit)} 件は"
                        "単位価格の順位付けから外した")
     if not with_unit:
         caveats.append("単位価格を出せる候補がない")
 
-    specs_in_unit = {(o.quantity.ply, o.quantity.length_m) for o in with_unit}
+    specs_in_unit = {(o.quantity.ply, o.quantity.length_m, o.quantity.length_label)
+                     for o in pool}
     if len(specs_in_unit) > 1:
         caveats.append("仕様違いを含む候補同士で単位価格を比べている"
                        "（シングル/ダブルや長さが異なる）。同じ仕様どうしで比べ直すこと")
-    specs_in_price = {group_key(o)[:2] for o in priced}
+    specs_in_price = {(group_key(o)[0], group_key(o)[1], group_key(o)[3]) for o in priced}
     if len(specs_in_price) > 1:
         caveats.append("仕様違いを含むため、商品価格の最安は同じ商品どうしの比較ではない")
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import time
+import unicodedata
 from dataclasses import asdict
 
 from .adapters.base import MarketplaceAdapter
@@ -68,12 +69,14 @@ def offer_to_dict(offer: Offer, known_urls: list[str] | None = None) -> dict:
         "points_rate": offer.points_rate,
         "review_average": offer.review_average,
         "review_count": offer.review_count,
+        "shipping_title_conflict": shipping_title_conflict(offer),
         "caption": (offer.caption[:CAPTION_MAX] if offer.caption else offer.caption),
         "fetched_at": offer.fetched_at,
         "matched_keywords": list(offer.matched_keywords),
         "quantity": None if q is None else {
             "total": q.total, "per_pack": q.per_pack, "pack_count": q.pack_count,
             "unit": q.unit, "ply": q.ply, "length_m": q.length_m,
+            "length_label": q.length_label,
             "confidence": q.confidence, "evidence": q.evidence},
         "unit_price": _round2(unit_price(offer)),
         "price_per_m": _round2(price_per_m(offer)),
@@ -117,12 +120,39 @@ def _search(keywords, adapter, *, pages, hits, limits, sleep, filters):
     return offers, stats, mock
 
 
+_TITLE_FREE_SHIP = ("送料無料", "送料込", "送料0円", "送料込み")
+_TITLE_SEPARATE_SHIP = ("送料別", "別途送料", "送料は別", "送料お客様負担", "送料はお客様負担")
+
+
+def shipping_title_conflict(offer: Offer) -> str | None:
+    """タイトルの送料表記と楽天のフラグ（postageFlag 由来の shipping_status）が食い違う時の説明。
+
+    送料はフラグを正とする（タイトルの文字で送料を決めない）。食い違いは注意として出すだけ。"""
+    title = unicodedata.normalize("NFKC", offer.item_name or "")
+    if offer.shipping_status == "separate" and any(w in title for w in _TITLE_FREE_SHIP):
+        return ("タイトルに「送料無料」等の表記があるが、楽天のデータでは送料別。"
+                "条件付き（一定額以上で無料など）の可能性があるため、購入前に商品ページで確認すること")
+    if offer.shipping_status == "included" and any(w in title for w in _TITLE_SEPARATE_SHIP):
+        return ("タイトルに「送料別」等の表記があるが、楽天のデータでは送料込み。"
+                "購入前に商品ページで確認すること")
+    return None
+
+
+def _shipping_conflict_note(offers: list[Offer]) -> str | None:
+    n = sum(1 for o in offers if shipping_title_conflict(o))
+    if not n:
+        return None
+    return (f"タイトルの送料表記と楽天のデータ（送料込み/別）が食い違う候補が {n} 件ある。"
+            "送料は楽天のデータを正として扱い、タイトルの文字では決めていない。購入前に商品ページで確認すること。")
+
+
 def _annotate(offers: list[Offer], unit: str) -> None:
     for o in offers:
         o.quantity = parse_quantity(o.item_name, unit=unit)
 
 
-def _base_notes(offers: list[Offer], stats: SearchStats, mock: bool) -> list[str]:
+def _base_notes(offers: list[Offer], stats: SearchStats, mock: bool,
+                *, shipping_conflict: bool = True) -> list[str]:
     notes = [_FRESHNESS_NOTE, f"出典: {SOURCE}"]
     if mock:
         notes.insert(0, _MOCK_NOTE)
@@ -130,6 +160,9 @@ def _base_notes(offers: list[Offer], stats: SearchStats, mock: bool) -> list[str
     if review:
         notes.append(f"商品URLの形式が想定外の候補が {review} 件ある（url_status=needs_review）。"
                      "購入前にリンク先を確認すること。")
+    conflict = _shipping_conflict_note(offers) if shipping_conflict else None
+    if conflict:
+        notes.append(conflict)
     errs = [f"{s.keyword}: {s.error}" for s in stats.per_keyword if s.error]
     if errs:
         notes.append("一部の検索でエラー: " + " / ".join(errs))
@@ -163,7 +196,8 @@ def _comparison_to_dict(c: Comparison, known_urls: list[str] | None = None) -> d
     def one(o: Offer | None):
         return None if o is None else offer_to_dict(o, known_urls)
     return {
-        "groups": [{"key": g.key, "ply": g.ply, "length_m": g.length_m, "count": len(g.offers),
+        "groups": [{"key": g.key, "ply": g.ply, "length_m": g.length_m,
+                    "length_label": g.length_label, "count": len(g.offers),
                     "offers": [offer_to_dict(o, known_urls) for o in g.offers[:GROUP_OFFERS_MAX]]}
                    for g in c.groups],
         "cheapest_price": one(c.cheapest_price),
@@ -189,11 +223,14 @@ def _compare_flow(keywords, required_spec, desired_quantity, *, unit, adapter, p
     offers, stats, mock = r
     _annotate(offers, unit)
     comparison = compare(offers, required_spec=required_spec, desired_quantity=desired_quantity)
+    conflict = _shipping_conflict_note(offers)
+    if conflict:
+        comparison.caveats.append(conflict)
     return {"ok": True, "source": SOURCE, "mock": mock, "keywords": _validate_keywords(keywords),
             "required_spec": required_spec, "desired_quantity": desired_quantity,
             "stats": _stats_to_dict(stats),
             "comparison": _comparison_to_dict(comparison, known_urls),
-            "notes": _base_notes(offers, stats, mock)}
+            "notes": _base_notes(offers, stats, mock, shipping_conflict=False)}
 
 
 def compare_offers(keywords, required_spec: dict | None = None,
