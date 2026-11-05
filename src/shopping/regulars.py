@@ -7,6 +7,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .quantity import resolve_basis
+
 DEFAULT_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "regulars.json"
 PATH_ENV = "SHOPPING_REGULARS_PATH"
 
@@ -28,8 +30,9 @@ class Regular:
     maker: str | None = None
     model_number: str | None = None
     jan: str | None = None
-    required_spec: dict = field(default_factory=dict)
-    unit: str = "ロール"
+    include_terms: list[str] = field(default_factory=list)
+    exclude_terms: list[str] = field(default_factory=list)
+    basis: str | None = None             # "個" または 基準単位（省略で自動）
     desired_quantity: int | None = None
     known_urls: list[str] = field(default_factory=list)
     notes: str | None = None
@@ -56,25 +59,32 @@ def _parse_one(d: object, index: int) -> Regular:
     kws = d.get("keywords")
     if not isinstance(kws, list) or not kws or not all(isinstance(k, str) and k.strip() for k in kws):
         raise RegularsError("invalid_format", f"{rid}: keywords must be a non-empty list of strings")
-    spec = d.get("required_spec", {})
-    if spec is None:
-        spec = {}
-    if not isinstance(spec, dict):
-        raise RegularsError("invalid_format", f"{rid}: required_spec must be an object")
+    terms: dict[str, list[str]] = {}
+    for key in ("include_terms", "exclude_terms"):
+        v = d.get(key)
+        if v is None:
+            v = []
+        if not isinstance(v, list) or not all(isinstance(t, str) and t.strip() for t in v):
+            raise RegularsError("invalid_format", f"{rid}: {key} must be a list of strings")
+        terms[key] = [t.strip() for t in v]
+    basis = d.get("basis")
+    if basis is not None:
+        try:
+            resolve_basis(basis)
+        except ValueError:
+            raise RegularsError("invalid_format", f"{rid}: basis is not a known unit") from None
     dq = d.get("desired_quantity")
-    if dq is not None and (isinstance(dq, bool) or not isinstance(dq, int) or dq <= 0):
-        raise RegularsError("invalid_format", f"{rid}: desired_quantity must be a positive integer")
+    if dq is not None and (isinstance(dq, bool) or not isinstance(dq, (int, float)) or dq <= 0):
+        raise RegularsError("invalid_format", f"{rid}: desired_quantity must be a positive number")
     urls = d.get("known_urls", [])
     if urls is None:
         urls = []
     if not isinstance(urls, list) or not all(isinstance(u, str) for u in urls):
         raise RegularsError("invalid_format", f"{rid}: known_urls must be a list of strings")
-    unit = d.get("unit", "ロール")
-    if not isinstance(unit, str) or not unit:
-        raise RegularsError("invalid_format", f"{rid}: unit must be a string")
     return Regular(id=rid, name=name, keywords=list(kws), maker=_opt_str(d, "maker"),
                    model_number=_opt_str(d, "model_number"), jan=_opt_str(d, "jan"),
-                   required_spec=dict(spec), unit=unit, desired_quantity=dq,
+                   include_terms=terms["include_terms"],
+                   exclude_terms=terms["exclude_terms"], basis=basis, desired_quantity=dq,
                    known_urls=list(urls), notes=_opt_str(d, "notes"))
 
 

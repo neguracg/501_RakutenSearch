@@ -14,8 +14,8 @@ from .adapters.rakuten import RakutenAdapter
 from .config import RakutenCredentials, load_credentials
 from .models import Offer, SearchStats
 from .orchestrator import Limits, search_many
-from .pricing import (Comparison, compare, price_per_m, total_price, unit_price)
-from .quantity import parse_quantity
+from .pricing import Comparison, compare, total_price
+from .quantity import basis_choices, parse_quantity, resolve_basis
 from .regulars import Regular, RegularsError, get_regular
 
 SOURCE = "楽天市場（楽天ウェブサービス）"
@@ -74,12 +74,12 @@ def offer_to_dict(offer: Offer, known_urls: list[str] | None = None) -> dict:
         "fetched_at": offer.fetched_at,
         "matched_keywords": list(offer.matched_keywords),
         "quantity": None if q is None else {
-            "total": q.total, "per_pack": q.per_pack, "pack_count": q.pack_count,
-            "unit": q.unit, "ply": q.ply, "length_m": q.length_m,
-            "length_label": q.length_label,
+            "count_total": q.count_total, "count_unit": q.count_unit,
+            "content_amount": q.content_amount, "content_dimension": q.content_dimension,
+            "content_unit": q.content_unit, "measure_total": q.measure_total,
             "confidence": q.confidence, "evidence": q.evidence},
-        "unit_price": _round2(unit_price(offer)),
-        "price_per_m": _round2(price_per_m(offer)),
+        "unit_price": _round2(offer.unit_price),
+        "unit_price_label": offer.unit_price_label,
     }
     if known_urls is not None:
         d["is_known_url"] = offer.item_url in known_urls
@@ -146,9 +146,9 @@ def _shipping_conflict_note(offers: list[Offer]) -> str | None:
             "送料は楽天のデータを正として扱い、タイトルの文字では決めていない。購入前に商品ページで確認すること。")
 
 
-def _annotate(offers: list[Offer], unit: str) -> None:
+def _annotate(offers: list[Offer]) -> None:
     for o in offers:
-        o.quantity = parse_quantity(o.item_name, unit=unit)
+        o.quantity = parse_quantity(o.item_name)
 
 
 def _base_notes(offers: list[Offer], stats: SearchStats, mock: bool,
@@ -173,7 +173,7 @@ def _base_notes(offers: list[Offer], stats: SearchStats, mock: bool,
 
 def search_products(keywords, *, ng_keyword: str | None = None, min_price: int | None = None,
                     max_price: int | None = None, sort: str = "standard", pages: int = 1,
-                    hits: int = 30, max_results: int = 30, unit: str = "ロール",
+                    hits: int = 30, max_results: int = 30,
                     adapter: MarketplaceAdapter | None = None, sleep=None,
                     limits: Limits | None = None) -> dict:
     filters = dict(ng_keyword=ng_keyword, min_price=min_price, max_price=max_price, sort=sort)
@@ -182,7 +182,7 @@ def search_products(keywords, *, ng_keyword: str | None = None, min_price: int |
     if isinstance(r, dict):
         return r
     offers, stats, mock = r
-    _annotate(offers, unit)
+    _annotate(offers)
     shown = offers[:max(0, max_results)]
     notes = _base_notes(offers, stats, mock)
     if len(shown) < len(offers):
@@ -196,57 +196,85 @@ def _comparison_to_dict(c: Comparison, known_urls: list[str] | None = None) -> d
     def one(o: Offer | None):
         return None if o is None else offer_to_dict(o, known_urls)
     return {
-        "groups": [{"key": g.key, "ply": g.ply, "length_m": g.length_m,
-                    "length_label": g.length_label, "count": len(g.offers),
+        "basis": c.basis,
+        "basis_label": c.basis_label,
+        "groups": [{"basis": g.basis, "dimension": g.dimension, "count": len(g.offers),
                     "offers": [offer_to_dict(o, known_urls) for o in g.offers[:GROUP_OFFERS_MAX]]}
                    for g in c.groups],
+        "unknown_offers": [offer_to_dict(o, known_urls) for o in c.unknown_offers[:GROUP_OFFERS_MAX]],
+        "unknown_count": len(c.unknown_offers),
         "cheapest_price": one(c.cheapest_price),
         "cheapest_unit_price": one(c.cheapest_unit_price),
         "cheapest_total": one(c.cheapest_total),
-        "cheapest_meeting_quantity": one(c.cheapest_meeting_quantity),
+        "cheapest_for_quantity": one(c.cheapest_for_quantity),
         "caveats": list(c.caveats),
+        "notes": list(c.notes),
     }
 
 
-def _compare_flow(keywords, required_spec, desired_quantity, *, unit, adapter, pages, hits,
-                  limits, sleep, filters, known_urls=None) -> dict:
-    if required_spec is not None and not isinstance(required_spec, dict):
-        return _error("invalid_request", "required_spec は {\"ply\": \"double\", \"length_m\": 30} 形式の辞書で指定する")
+def _terms_arg(value, name: str) -> list[str] | None | dict:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, (list, tuple)) or not all(isinstance(t, str) for t in value):
+        return _error("invalid_request", f"{name} は文字列のリストで指定する")
+    return [t.strip() for t in value if t.strip()] or None
+
+
+def _compare_flow(keywords, include_terms, exclude_terms, desired_quantity, basis, *, adapter,
+                  pages, hits, limits, sleep, filters, known_urls=None) -> dict:
+    inc = _terms_arg(include_terms, "include_terms")
+    exc = _terms_arg(exclude_terms, "exclude_terms")
+    for v in (inc, exc):
+        if isinstance(v, dict):
+            return v
+    if basis in ("", None):
+        basis = None
+    else:
+        try:
+            resolve_basis(basis)
+        except ValueError:
+            return _error("invalid_request",
+                          "basis は " + " / ".join(basis_choices()) + "（または L・kg 等の別名）で指定する")
     if desired_quantity is not None and (isinstance(desired_quantity, bool)
-                                         or not isinstance(desired_quantity, int)
+                                         or not isinstance(desired_quantity, (int, float))
                                          or desired_quantity <= 0):
-        return _error("invalid_request", "desired_quantity は正の整数で指定する")
+        return _error("invalid_request", "desired_quantity は正の数で指定する（basis の単位）")
     r = _search(keywords, adapter, pages=pages, hits=hits, limits=limits, sleep=sleep,
                 filters=filters)
     if isinstance(r, dict):
         return r
     offers, stats, mock = r
-    _annotate(offers, unit)
-    comparison = compare(offers, required_spec=required_spec, desired_quantity=desired_quantity)
+    _annotate(offers)
+    comparison = compare(offers, include_terms=inc, exclude_terms=exc,
+                         desired_quantity=desired_quantity, basis=basis)
     conflict = _shipping_conflict_note(offers)
     if conflict:
         comparison.caveats.append(conflict)
+    notes = _base_notes(offers, stats, mock, shipping_conflict=False) + comparison.notes
     return {"ok": True, "source": SOURCE, "mock": mock, "keywords": _validate_keywords(keywords),
-            "required_spec": required_spec, "desired_quantity": desired_quantity,
-            "stats": _stats_to_dict(stats),
-            "comparison": _comparison_to_dict(comparison, known_urls),
-            "notes": _base_notes(offers, stats, mock, shipping_conflict=False)}
+            "include_terms": inc, "exclude_terms": exc, "desired_quantity": desired_quantity,
+            "basis": comparison.basis, "stats": _stats_to_dict(stats),
+            "comparison": _comparison_to_dict(comparison, known_urls), "notes": notes}
 
 
-def compare_offers(keywords, required_spec: dict | None = None,
-                   desired_quantity: int | None = None, *, ng_keyword: str | None = None,
+def compare_offers(keywords, include_terms=None, exclude_terms=None, desired_quantity=None,
+                   basis: str | None = None, *, ng_keyword: str | None = None,
                    min_price: int | None = None, max_price: int | None = None,
-                   sort: str = "standard", pages: int = 1, hits: int = 30, unit: str = "ロール",
+                   sort: str = "standard", pages: int = 1, hits: int = 30,
                    adapter: MarketplaceAdapter | None = None, sleep=None,
                    limits: Limits | None = None) -> dict:
     filters = dict(ng_keyword=ng_keyword, min_price=min_price, max_price=max_price, sort=sort)
-    return _compare_flow(keywords, required_spec, desired_quantity, unit=unit, adapter=adapter,
-                         pages=pages, hits=hits, limits=limits, sleep=sleep, filters=filters)
+    return _compare_flow(keywords, include_terms, exclude_terms, desired_quantity, basis,
+                         adapter=adapter, pages=pages, hits=hits, limits=limits, sleep=sleep,
+                         filters=filters)
 
 
 def _regular_info(r: Regular) -> dict:
     return {"id": r.id, "name": r.name, "maker": r.maker, "model_number": r.model_number,
-            "jan": r.jan, "unit": r.unit, "required_spec": r.required_spec,
+            "jan": r.jan, "include_terms": r.include_terms,
+            "exclude_terms": r.exclude_terms, "basis": r.basis,
             "desired_quantity": r.desired_quantity, "keywords": r.keywords, "notes": r.notes}
 
 
@@ -271,8 +299,8 @@ def find_regular_item(regular_id: str, *, regulars_path=None, pages: int = 1, hi
         if exc.kind == "invalid_format" and exc.detail:
             msg += f"（{exc.detail}）"
         return _error(f"regulars_{exc.kind}", msg)
-    out = _compare_flow(reg.keywords, reg.required_spec or None, reg.desired_quantity,
-                        unit=reg.unit, adapter=adapter, pages=pages, hits=hits, limits=limits,
+    out = _compare_flow(reg.keywords, reg.include_terms or None, reg.exclude_terms or None,
+                        reg.desired_quantity, reg.basis, adapter=adapter, pages=pages, hits=hits, limits=limits,
                         sleep=sleep, filters={}, known_urls=reg.known_urls)
     out["regular"] = _regular_info(reg)
     return out

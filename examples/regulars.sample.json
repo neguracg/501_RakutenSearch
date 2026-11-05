@@ -1,17 +1,36 @@
 {
   "regulars": [
     {
-      "id": "tp-double-30m",
-      "name": "トイレットペーパー ダブル 30m（架空の見本）",
+      "id": "detergent-refill",
+      "name": "洗濯洗剤 詰め替え（架空の見本）",
       "maker": "架空メーカー",
       "model_number": null,
       "jan": null,
-      "required_spec": {"ply": "double", "length_m": 30},
-      "unit": "ロール",
-      "desired_quantity": 48,
-      "keywords": ["トイレットペーパー ダブル 30m", "トイレットペーパー 12ロール"],
+      "include_terms": ["詰め替え"],
+      "exclude_terms": ["本体"],
+      "basis": "g",
+      "desired_quantity": 5000,
+      "keywords": ["洗濯洗剤 詰め替え", "洗濯洗剤 詰め替え 大容量"],
       "known_urls": [],
-      "notes": "見本です。data/regulars.json（git 管理外）にコピーして自分用に書き換える。価格・在庫は保存しない。"
+      "notes": "見本です。data/regulars.json（バージョン管理の外）にコピーして自分用に書き換える。価格・在庫は保存しない。"
+    },
+    {
+      "id": "aa-battery-40",
+      "name": "単3電池（架空の見本）",
+      "include_terms": ["単3"],
+      "exclude_terms": [],
+      "basis": "個",
+      "desired_quantity": 40,
+      "keywords": ["単3電池 アルカリ", "単3 乾電池"],
+      "known_urls": []
+    },
+    {
+      "id": "mineral-water-2l",
+      "name": "ミネラルウォーター 2L（架空の見本）",
+      "include_terms": ["ミネラルウォーター"],
+      "desired_quantity": 18000,
+      "keywords": ["ミネラルウォーター 2L", "ミネラルウォーター 500ml"],
+      "known_urls": []
     }
   ]
 }

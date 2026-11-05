@@ -2,7 +2,7 @@
 """買い物リサーチ CLI。
 
   python cli.py search "kw1" "kw2" [--min-price N] [--max-price N] [--ng 語] [--pages N] [--mock] [--json]
-  python cli.py compare "kw1" ... [--ply double|single] [--length-m 30] [--desired-quantity 48] [...]
+  python cli.py compare "kw1" ... [--include 語 ...] [--exclude 語 ...] [--basis 個|ml|g|m|W|...] [--desired-quantity N] [...]
   python cli.py regular <id> [--regulars PATH] [--mock] [--json]
 
 --mock（または環境変数 SHOPPING_MOCK=1）で架空データを使い、API を呼ばない。
@@ -43,10 +43,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--max-results", type=int, default=30)
     c = sub.add_parser("compare", help="同じ仕様どうしで比較して最安を出す")
     _add_search_args(c)
-    c.add_argument("--ply", choices=["single", "double"])
-    c.add_argument("--length-m", type=float)
-    c.add_argument("--desired-quantity", type=int)
-    c.add_argument("--unit", default="ロール")
+    c.add_argument("--include", nargs="+", metavar="語", help="商品名に全て含む語（例: 詰め替え 単3）")
+    c.add_argument("--exclude", nargs="+", metavar="語", help="商品名に含んだら外す語")
+    c.add_argument("--basis", help="比べる単位: 個 / ml / g / m / W / mAh / Wh（L・kg 等の別名も可）。省略で自動")
+    c.add_argument("--desired-quantity", type=float, help="必要な量（basis の単位）")
     r = sub.add_parser("regular", help="定番品マスタの id で今の最安を調べる")
     r.add_argument("regular_id")
     r.add_argument("--regulars", help="定番品マスタのパス（既定 data/regulars.json）")
@@ -66,25 +66,18 @@ def _ship(o: dict) -> str:
 
 def _qty(o: dict) -> str:
     q = o.get("quantity") or {}
-    if q.get("confidence") == "high":
-        up = o.get("unit_price")
-        return f"{q['total']}{q['unit']}" + (f"(1{q['unit']}={up:,.2f}円)" if up is not None else "")
-    return "数量不明" if q.get("confidence") == "none" else "数量要確認"
-
-
-def _spec(o: dict) -> str:
-    q = o.get("quantity") or {}
-    ply = {"double": "ダブル", "single": "シングル"}.get(q.get("ply"), "ply不明")
-    ln = f"{q['length_m']:g}m" if q.get("length_m") else "長さ不明"
-    label = q.get("length_label")
-    if label:
-        ln += f"({'倍巻き・長尺表記' + ('' if label in ('multi', 'long') else ' ' + label)})"
-    return f"{ply}/{ln}"
+    if q.get("confidence") != "high":
+        return "数量不明" if q.get("confidence") == "none" else "数量要確認"
+    text = f"{q['count_total']}{q['count_unit']}"
+    if q.get("content_amount") is not None:
+        text += f" × {q['content_amount']:g}{q['content_unit']}（計 {q['measure_total']:g}{q['content_unit']}）"
+    up = o.get("unit_price")
+    return text + (f"（{o['unit_price_label']} {up:,.2f}円）" if up is not None else "")
 
 
 def _offer_line(o: dict) -> str:
     mark = "" if o["url_status"] == "ok" else " [URL要確認]"
-    return (f"{_yen(o['price'])} | {o['shop_name'] or '店舗不明'} | {_qty(o)} | {_spec(o)} | "
+    return (f"{_yen(o['price'])} | {o['shop_name'] or '店舗不明'} | {_qty(o)} | "
             f"{_ship(o)}{mark}\n      {o['name']}\n      {o['url']}")
 
 
@@ -115,18 +108,24 @@ def render_compare(r: dict) -> None:
     _print_stats(r["stats"])
     c = r["comparison"]
     print()
+    print(f"比べる単位: {c['basis_label']}（{c['basis']}）")
     for g in c["groups"]:
-        print(f"■ 仕様グループ {g['key']}（{g['count']} 件）")
+        print(f"■ {g['basis']} で比較できる候補（{g['count']} 件・単位価格の安い順）")
         for i, o in enumerate(g["offers"], 1):
+            print(f"  [{i}] {_offer_line(o)}")
+    if c["unknown_count"]:
+        print(f"■ 単価不明（{c['basis']} の量を読めない）{c['unknown_count']} 件")
+        for i, o in enumerate(c["unknown_offers"], 1):
             print(f"  [{i}] {_offer_line(o)}")
     print()
     labels = [("cheapest_price", "商品価格が最安"), ("cheapest_unit_price", "単位価格が最安"),
-              ("cheapest_total", "支払総額が最安"), ("cheapest_meeting_quantity", "必要数量を満たす最安")]
+              ("cheapest_total", "支払総額が最安"), ("cheapest_for_quantity", "必要数量を満たす最安")]
     for key, label in labels:
         o = c[key]
         print(f"★ {label}: " + ("（断定できない／該当なし）" if o is None else _offer_line(o)))
     if c["caveats"]:
-        print("\n断定できない理由・注意:")
+        print()
+        print("断定できない理由・注意:")
         for cv in c["caveats"]:
             print(f"  - {cv}")
     print()
@@ -143,15 +142,10 @@ def run(argv: list[str] | None = None) -> int:
             max_results=args.max_results, adapter=adapter)
         render = render_search
     elif args.command == "compare":
-        spec = {}
-        if args.ply:
-            spec["ply"] = args.ply
-        if args.length_m is not None:
-            spec["length_m"] = args.length_m
         result = service.compare_offers(
-            args.keywords, spec or None, args.desired_quantity, ng_keyword=args.ng_keyword,
-            min_price=args.min_price, max_price=args.max_price, sort=args.sort,
-            pages=args.pages, unit=args.unit, adapter=adapter)
+            args.keywords, args.include, args.exclude, args.desired_quantity, args.basis,
+            ng_keyword=args.ng_keyword, min_price=args.min_price, max_price=args.max_price,
+            sort=args.sort, pages=args.pages, adapter=adapter)
         render = render_compare
     else:
         result = service.find_regular_item(args.regular_id, regulars_path=args.regulars,
@@ -164,8 +158,8 @@ def run(argv: list[str] | None = None) -> int:
     else:
         if args.command == "regular":
             reg = result["regular"]
-            print(f"定番品: {reg['name']} (id={reg['id']}) 必要仕様={reg['required_spec']} "
-                  f"希望数量={reg['desired_quantity']}")
+            print(f"定番品: {reg['name']} (id={reg['id']}) 含む語={reg['include_terms']} "
+                  f"除く語={reg['exclude_terms']} 単位={reg['basis'] or '自動'} 希望数量={reg['desired_quantity']}")
         render(result)
     return 0 if result["ok"] else 1
 

@@ -24,9 +24,11 @@ def write(tmp_path, data, name="regulars.json"):
 
 def test_sample_file_loads():
     regs = load_regulars(SAMPLE)
-    assert regs[0].id == "tp-double-30m" and regs[0].required_spec == {"ply": "double", "length_m": 30}
-    assert regs[0].desired_quantity == 48 and regs[0].unit == "ロール"
-    assert get_regular("tp-double-30m", SAMPLE).keywords
+    assert [r.id for r in regs] == ["detergent-refill", "aa-battery-40", "mineral-water-2l"]   # 3 カテゴリ
+    assert regs[0].include_terms == ["詰め替え"] and regs[0].exclude_terms == ["本体"]
+    assert regs[0].basis == "g" and regs[0].desired_quantity == 5000
+    assert regs[2].basis is None and regs[2].include_terms == ["ミネラルウォーター"]
+    assert get_regular("aa-battery-40", SAMPLE).keywords
 
 
 def test_sample_has_no_price_or_stock_fields():
@@ -44,7 +46,10 @@ def test_top_level_list_also_accepted(tmp_path):
     {"regulars": [{"name": "A", "keywords": ["x"]}]},
     {"regulars": [{"id": "a", "name": "A", "keywords": []}]},
     {"regulars": [{"id": "a", "name": "A", "keywords": [1]}]},
-    {"regulars": [{"id": "a", "name": "A", "keywords": ["x"], "required_spec": []}]},
+    {"regulars": [{"id": "a", "name": "A", "keywords": ["x"], "include_terms": "x"}]},
+    {"regulars": [{"id": "a", "name": "A", "keywords": ["x"], "exclude_terms": [1]}]},
+    {"regulars": [{"id": "a", "name": "A", "keywords": ["x"], "basis": "ふしぎ"}]},
+    {"regulars": [{"id": "a", "name": "A", "keywords": ["x"], "desired_quantity": True}]},
     {"regulars": [{"id": "a", "name": "A", "keywords": ["x"], "desired_quantity": 0}]},
     {"regulars": [{"id": "a", "name": "A", "keywords": ["x"], "known_urls": "u"}]},
     {"regulars": [{"id": "a", "name": "A", "keywords": ["x"]}, {"id": "a", "name": "B", "keywords": ["y"]}]},
@@ -80,18 +85,24 @@ def test_env_path_override(tmp_path, monkeypatch):
 
 def test_mock_adapter_filters_and_pages():
     m = MockAdapter()
-    offers, count = m.search("トイレットペーパー ダブル 30m")
-    assert count == len(offers) >= 5
+    offers, count = m.search("洗濯洗剤 詰め替え")
+    assert count == len(offers) >= 4
     assert all("架空" in o.item_name for o in offers)
-    offers, _ = m.search("トイレットペーパー", min_price=2000, max_price=3000)
+    offers, _ = m.search("洗濯洗剤", min_price=2000, max_price=3000)
     assert offers and all(2000 <= o.price <= 3000 for o in offers)
-    offers, _ = m.search("トイレットペーパー", ng_keyword="シングル")
-    assert all("シングル" not in o.item_name for o in offers)
-    p1, c = m.search("トイレットペーパー", hits=3, page=1)
-    p2, _ = m.search("トイレットペーパー", hits=3, page=2)
+    offers, _ = m.search("洗濯洗剤", ng_keyword="本体")
+    assert all("本体" not in o.item_name for o in offers)
+    p1, c = m.search("洗濯洗剤", hits=3, page=1)
+    p2, _ = m.search("洗濯洗剤", hits=3, page=2)
     assert len(p1) == 3 and p2 and c > 3
     assert {o.mall_item_code for o in p1}.isdisjoint({o.mall_item_code for o in p2})
     assert m.search("存在しない商品xyz")[0] == []
+
+
+def test_mock_data_covers_three_or_more_categories():
+    names = " ".join(o.item_name for o in MockAdapter().search("架空", hits=30)[0])
+    for word in ("洗濯洗剤", "単3電池", "ミネラルウォーター", "ソーラーパネル"):
+        assert word in names
 
 
 def test_mock_data_has_no_real_shop_marks():
@@ -113,8 +124,7 @@ def test_make_adapter_mock_env(monkeypatch):
 # --- service: search_products ----------------------------------------------------
 
 def test_search_products_with_mock_returns_json_ready_dict():
-    r = service.search_products(["トイレットペーパー ダブル 30m", "トイレットペーパー 12ロール"],
-                                adapter=MockAdapter())
+    r = service.search_products(["洗濯洗剤 詰め替え", "洗濯洗剤 900g"], adapter=MockAdapter())
     json.dumps(r, ensure_ascii=False)  # JSON 化できる
     assert r["ok"] and r["mock"] is True and r["returned"] == len(r["offers"]) > 0
     assert r["stats"]["duplicates_removed"] > 0 and r["stats"]["unique_offers"] == r["returned"]
@@ -135,12 +145,12 @@ def test_search_products_caption_truncated():
 
 
 def test_search_products_max_results_truncates_and_says_so():
-    r = service.search_products(["トイレットペーパー"], adapter=MockAdapter(), max_results=2)
+    r = service.search_products(["洗濯洗剤"], adapter=MockAdapter(), max_results=2)
     assert r["returned"] == 2 and any("max_results" in n for n in r["notes"])
 
 
 def test_search_products_needs_review_noted():
-    r = service.search_products(["トイレットペーパー ダブル 30m"], adapter=MockAdapter())
+    r = service.search_products(["洗濯洗剤 詰め替え"], adapter=MockAdapter())
     assert any(o["url_status"] == "needs_review" for o in r["offers"])
     assert any("needs_review" in n for n in r["notes"])
 
@@ -189,53 +199,92 @@ def test_missing_credentials_surfaces_as_error(monkeypatch, tmp_path):
 # --- service: compare_offers -----------------------------------------------------
 
 def test_compare_offers_mock_end_to_end():
-    r = service.compare_offers(["トイレットペーパー ダブル 30m", "トイレットペーパー 12ロール"],
-                               required_spec={"ply": "double", "length_m": 30},
-                               desired_quantity=48, adapter=MockAdapter())
+    r = service.compare_offers(["洗濯洗剤 詰め替え", "洗濯洗剤 900g"], ["詰め替え"], ["本体"], 5000, "g",
+                               adapter=MockAdapter())
     json.dumps(r, ensure_ascii=False)
     c = r["comparison"]
-    assert r["ok"] and len(c["groups"]) == 1 and c["groups"][0]["key"] == "double|30m|ロール"
-    assert c["cheapest_unit_price"]["item_code"] == "exshop-e:tp-96"
+    assert r["ok"] and r["basis"] == "g" and c["basis"] == "g" and c["basis_label"] == "100gあたり"
+    assert r["include_terms"] == ["詰め替え"] and r["exclude_terms"] == ["本体"]
+    assert len(c["groups"]) == 1 and c["groups"][0]["dimension"] == "mass"
+    assert c["cheapest_unit_price"]["item_code"] == "exshop-a:det-6"
+    assert c["cheapest_unit_price"]["unit_price_label"] == "100gあたり"
     assert c["cheapest_total"] is None                       # 送料不明が混在
-    assert any("断定できない" in x for x in c["caveats"])
-    assert c["cheapest_meeting_quantity"]["quantity"]["total"] >= 48
+    assert any("送料" in x for x in c["caveats"])
+    assert c["cheapest_for_quantity"]["quantity"]["measure_total"] >= 5000
     prices = [o["unit_price"] for o in c["groups"][0]["offers"] if o["unit_price"] is not None]
     assert prices == sorted(prices)
+    assert "含む語で除外: 1件" in c["notes"] and "含む語で除外: 1件" in r["notes"]
 
 
-def test_compare_offers_without_spec_flags_mixed_specs():
-    r = service.compare_offers(["トイレットペーパー"], adapter=MockAdapter())
-    assert len(r["comparison"]["groups"]) >= 3
-    assert any("仕様違いを含む" in x for x in r["comparison"]["caveats"])
+def test_compare_offers_result_shape_and_quantity_fields():
+    r = service.compare_offers(["単3電池"], adapter=MockAdapter())
+    c = r["comparison"]
+    for k in ("basis", "basis_label", "groups", "unknown_offers", "cheapest_price", "cheapest_unit_price",
+              "cheapest_total", "cheapest_for_quantity", "caveats", "notes"):
+        assert k in c
+    assert c["basis"] == "個" and c["groups"][0]["dimension"] == "count"
+    o = c["cheapest_unit_price"]
+    assert o["quantity"]["count_unit"] == "本" and o["unit_price_label"] == "1個あたり"
+    for k in ("count_total", "content_amount", "content_dimension", "content_unit", "measure_total",
+              "confidence", "evidence"):
+        assert k in o["quantity"]
+    assert "ply" not in o["quantity"] and "length_label" not in o["quantity"]
 
 
-@pytest.mark.parametrize("kw", [dict(required_spec=["ply"]), dict(desired_quantity=0),
-                                dict(desired_quantity="48"), dict(desired_quantity=True)])
+@pytest.mark.parametrize("query,basis", [("洗濯洗剤 詰め替え", "g"), ("ミネラルウォーター", "ml"),
+                                         ("単3電池", "個"), ("ソーラーパネル", "W")])
+def test_compare_offers_auto_basis_per_category(query, basis):
+    r = service.compare_offers([query], adapter=MockAdapter())
+    assert r["ok"] and r["comparison"]["basis"] == basis and r["comparison"]["groups"]
+
+
+def test_compare_offers_unreadable_goes_to_unknown_and_says_so():
+    r = service.compare_offers(["ソーラーパネル"], adapter=MockAdapter())
+    c = r["comparison"]
+    assert c["unknown_count"] == 1 and c["unknown_offers"][0]["unit_price"] is None
+    assert any("単価を出せない候補: 1件" in x for x in c["caveats"])
+
+
+def test_compare_offers_always_carries_the_standing_caveat():
+    r = service.compare_offers(["洗濯洗剤"], adapter=MockAdapter())
+    assert "仕様の違い（濃縮・層数・型番・色など）は判定していません。商品名で確認してください。" in r["comparison"]["caveats"]
+
+
+@pytest.mark.parametrize("kw", [dict(include_terms="x1", exclude_terms=[1]), dict(desired_quantity=0),
+                                dict(desired_quantity="48"), dict(desired_quantity=True),
+                                dict(basis="ふしぎ"), dict(include_terms={"a": 1})])
 def test_compare_offers_bad_args(kw):
     r = service.compare_offers(["a"], adapter=MockAdapter(), **kw)
     assert r["ok"] is False and r["error"]["kind"] == "invalid_request"
 
 
+def test_compare_offers_accepts_alias_basis_and_single_string_terms():
+    r = service.compare_offers(["ミネラルウォーター"], include_terms="2L", basis="L",
+                               adapter=MockAdapter())
+    assert r["ok"] and r["comparison"]["basis"] == "ml" and r["include_terms"] == ["2L"]
+
+
 # --- service: find_regular_item --------------------------------------------------
 
 def test_find_regular_item_mock_end_to_end():
-    r = service.find_regular_item("tp-double-30m", regulars_path=SAMPLE, adapter=MockAdapter())
-    assert r["ok"] and r["regular"]["id"] == "tp-double-30m"
+    r = service.find_regular_item("detergent-refill", regulars_path=SAMPLE, adapter=MockAdapter())
+    assert r["ok"] and r["regular"]["id"] == "detergent-refill"
     assert r["comparison"]["cheapest_unit_price"] is not None
-    assert r["desired_quantity"] == 48 and r["required_spec"]["ply"] == "double"
+    assert r["desired_quantity"] == 5000 and r["include_terms"] == ["詰め替え"] and r["basis"] == "g"
+    assert r["regular"]["basis"] == "g" and "required_spec" not in r["regular"]
 
 
 def test_find_regular_item_known_url_flag(tmp_path):
-    p = write(tmp_path, [{"id": "r", "name": "R", "keywords": ["トイレットペーパー ダブル 30m"],
-                          "required_spec": {"ply": "double", "length_m": 30},
-                          "known_urls": ["https://item.rakuten.co.jp/exshop-a/tp-48/"]}])
+    p = write(tmp_path, [{"id": "r", "name": "R", "keywords": ["洗濯洗剤 詰め替え"],
+                          "include_terms": ["詰め替え"],
+                          "known_urls": ["https://item.rakuten.co.jp/exshop-a/det-6/"]}])
     r = service.find_regular_item("r", regulars_path=p, adapter=MockAdapter())
     flags = {o["item_code"]: o["is_known_url"] for g in r["comparison"]["groups"] for o in g["offers"]}
-    assert flags["exshop-a:tp-48"] is True and flags["exshop-b:tp-72"] is False
+    assert flags["exshop-a:det-6"] is True and flags["exshop-b:det-4"] is False
 
 
 def test_find_regular_item_errors(tmp_path):
-    r = service.find_regular_item("tp-double-30m", regulars_path=tmp_path / "none.json",
+    r = service.find_regular_item("detergent-refill", regulars_path=tmp_path / "none.json",
                                   adapter=MockAdapter())
     assert r["ok"] is False and r["error"]["kind"] == "regulars_file_not_found"
     r = service.find_regular_item("nope", regulars_path=SAMPLE, adapter=MockAdapter())

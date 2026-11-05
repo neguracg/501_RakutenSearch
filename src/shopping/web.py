@@ -74,6 +74,12 @@ def parse_keywords(q: str | None) -> list[str] | str:
     return parts
 
 
+def parse_terms(raw: str | None) -> list[str] | None:
+    """含む語・除く語: 空白・カンマ区切り。"""
+    parts = [p for p in re.split(r"[\s,，、]+", raw or "") if p]
+    return parts or None
+
+
 def _parse_price(raw: str | None, label: str) -> int | None | str:
     if raw is None or raw.strip() == "":
         return None
@@ -126,8 +132,10 @@ def create_app(base_path: str | None = None, gate: Gate | None = None) -> FastAP
     app.state.gate = gate
     router = APIRouter()
 
-    def run(request: Request, mode: str, q, ng, min_price, max_price):
-        form = {"q": q or "", "ng": ng or "", "min_price": min_price or "", "max_price": max_price or ""}
+    def run(request: Request, mode: str, q, ng, min_price, max_price, include=None, exclude=None,
+            basis=None):
+        form = {"q": q or "", "ng": ng or "", "min_price": min_price or "", "max_price": max_price or "",
+                "include": include or "", "exclude": exclude or "", "basis": basis or ""}
         keywords = parse_keywords(q)
         lo = _parse_price(min_price, "価格の下限")
         hi = _parse_price(max_price, "価格の上限")
@@ -147,7 +155,8 @@ def create_app(base_path: str | None = None, gate: Gate | None = None) -> FastAP
         common = dict(ng_keyword=ng_word or None, min_price=lo, max_price=hi, pages=PAGES, hits=HITS,
                       adapter=gate.adapter, sleep=lambda s: None, limits=Limits(min_interval_sec=0))
         if mode == "compare":
-            result = service.compare_offers(keywords, **common)
+            result = service.compare_offers(keywords, parse_terms(include), parse_terms(exclude),
+                                            None, (basis or "").strip() or None, **common)
         else:
             result = service.search_products(keywords, max_results=HITS, **common)
         if not result.get("ok"):
@@ -164,18 +173,20 @@ def create_app(base_path: str | None = None, gate: Gate | None = None) -> FastAP
                    notes=result["notes"], form=form)
         if mode == "compare":
             c = result["comparison"]
-            ctx.update(caveats=c["caveats"],
+            ctx.update(caveats=c["caveats"], basis_label=c["basis_label"],
                        cheapest=[("商品価格が最安", c["cheapest_price"]),
-                                 ("1ロールあたりの単価が最安", c["cheapest_unit_price"]),
+                                 (f"{c['basis_label']}の単価が最安", c["cheapest_unit_price"]),
                                  ("支払総額が最安（送料が分かる場合のみ）", c["cheapest_total"])],
-                       groups=[dict(g, title=group_title(g)) for g in c["groups"]])
+                       groups=[dict(g, title=group_title(g, c["basis_label"])) for g in c["groups"]],
+                       unknown_offers=c["unknown_offers"], unknown_count=c["unknown_count"])
         else:
             ctx.update(offers=result["offers"])
         return _page(request, "results.html", **ctx)
 
     @router.get("/", response_class=HTMLResponse)
     def index(request: Request):
-        return _page(request, "index.html", form={"q": "", "ng": "", "min_price": "", "max_price": ""})
+        return _page(request, "index.html", form={"q": "", "ng": "", "min_price": "", "max_price": "",
+                                                  "include": "", "exclude": "", "basis": ""})
 
     @router.get("/search", response_class=HTMLResponse)
     def search(request: Request, q: str | None = None, ng: str | None = None,
@@ -184,8 +195,9 @@ def create_app(base_path: str | None = None, gate: Gate | None = None) -> FastAP
 
     @router.get("/compare", response_class=HTMLResponse)
     def compare(request: Request, q: str | None = None, ng: str | None = None,
-                min_price: str | None = None, max_price: str | None = None):
-        return run(request, "compare", q, ng, min_price, max_price)
+                min_price: str | None = None, max_price: str | None = None,
+                include: str | None = None, exclude: str | None = None, basis: str | None = None):
+        return run(request, "compare", q, ng, min_price, max_price, include, exclude, basis)
 
     @router.get("/healthz")
     def healthz():

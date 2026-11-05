@@ -6,6 +6,7 @@ from jinja2 import DictLoader, Environment
 
 from .adapters.rakuten import is_item_url
 from .credit import CREDIT_HTML, FRESHNESS_TEXT, OPERATOR_TEXT
+from .quantity import basis_choices
 
 _CSS = """
 :root{--bg:#fff;--fg:#1a1a1a;--muted:#5a5a5a;--line:#d9d9d9;--card:#f6f6f6;--accent:#b00020;--warn:#7a4b00;--warnbg:#fff4e0}
@@ -44,7 +45,7 @@ _TEMPLATES = {
 <style>{{ css|safe }}</style></head>
 <body><main>
 <h1><a href="{{ base }}/" style="text-decoration:none;color:inherit">買い物リサーチ</a></h1>
-<p class="sub">楽天市場の商品を検索し、入り数・単価・送料に注意して比べます。購入操作はしません。</p>
+<p class="sub">楽天市場の商品を検索し、個数・内容量・単価・送料に注意して比べます。購入操作はしません。</p>
 {% block body %}{% endblock %}
 </main>
 <footer>
@@ -57,10 +58,20 @@ _TEMPLATES = {
 {% block body %}
 <form method="get" action="{{ base }}/search">
 <label for="q">探したいもの（1〜5語）</label>
-<textarea id="q" name="q" rows="3" required placeholder="例: トイレットペーパー ダブル 12ロール">{{ form.q }}</textarea>
+<textarea id="q" name="q" rows="3" required placeholder="例: 洗濯洗剤 詰め替え 900g">{{ form.q }}</textarea>
 <div class="hint">改行またはカンマで区切ると、語ごとに検索して統合します。</div>
-<label for="ng">除外したい語（任意）</label>
-<input id="ng" name="ng" value="{{ form.ng }}" maxlength="60">
+<label for="include">含む語（任意。商品名に全部含むものだけ残す）</label>
+<input id="include" name="include" value="{{ form.include }}" placeholder="例: 詰め替え 濃縮">
+<label for="exclude">除く語（任意。商品名に含むものは外す）</label>
+<input id="exclude" name="exclude" value="{{ form.exclude }}" placeholder="例: 本体 訳あり">
+<div class="hint">語は空白かカンマで区切ります（5語まで）。仕様の違い（濃縮・型番・色など）は自動では判定しないので、ここで絞るか結果の商品名で確認してください。</div>
+<label for="ng">楽天側の除外語（任意）</label>
+<input id="ng" name="ng" value="{{ form.ng }}">
+<label for="basis">比べる単位</label>
+<select id="basis" name="basis">
+<option value="">自動（商品名から読み取れる量で決める）</option>
+{% for b in bases %}<option value="{{ b }}"{% if form.basis == b %} selected{% endif %}>{{ b }}あたり</option>
+{% endfor %}</select>
 <div class="row">
 <div><label for="min_price">価格の下限（円）</label><input id="min_price" name="min_price" inputmode="numeric" value="{{ form.min_price }}"></div>
 <div><label for="max_price">価格の上限（円）</label><input id="max_price" name="max_price" inputmode="numeric" value="{{ form.max_price }}"></div>
@@ -70,7 +81,7 @@ _TEMPLATES = {
 <button type="submit" class="primary" formaction="{{ base }}/compare" formmethod="get">比較する</button>
 </div>
 </form>
-<p class="hint">「比較する」は入り数を読み取って 1 ロールあたりの単価などを出します。読み取れない商品は順位付けから外し、その理由を表示します。</p>
+<p class="hint">「比較する」は商品名から個数と内容量（例: 900g×6、2L×9本、100W×2）を読み取り、選んだ単位あたりの単価などを出します。読み取れない商品は順位付けから外し、その理由を表示します。</p>
 {% endblock %}""",
 
     "message.html": """{% extends "base.html" %}
@@ -88,7 +99,7 @@ _TEMPLATES = {
 <div class="name">{{ o.name }}</div>
 <div><span class="price">{{ yen(o.price) }}</span>
  <span class="meta">／ {{ ship(o) }}{% if o.total_price is not none and o.shipping_status == 'separate' %}（総額 {{ yen(o.total_price) }}）{% endif %}</span></div>
-<div class="meta">{{ o.shop_name or '店舗不明' }} ／ {{ qty(o) }} ／ {{ spec(o) }}</div>
+<div class="meta">{{ o.shop_name or '店舗不明' }} ／ {{ qty(o) }}</div>
 {% if o.review_count %}<div class="meta">レビュー {{ o.review_average }}（{{ o.review_count }}件）</div>{% endif %}
 {% if o.shipping_title_conflict %}<div class="warn">{{ o.shipping_title_conflict }}</div>{% endif %}
 <div class="meta">取得 {{ o.fetched_at or '不明' }}</div>
@@ -105,13 +116,17 @@ _TEMPLATES = {
 <h3 style="font-size:.95rem;margin:.8rem 0 0">{{ label }}</h3>
 {% if o %}{{ offer_card(o, True) }}{% else %}<div class="card meta">断定できない、または該当なし（上の理由を確認してください）</div>{% endif %}
 {% endfor %}
-<h2>仕様ごとの比較（単位価格の安い順）</h2>
+<h2>{{ basis_label }}の比較（単位価格の安い順）</h2>
 {% for g in groups %}
 <details {% if loop.first %}open{% endif %}><summary>{{ g.title }}（{{ g.count }}件）</summary>
 {% for o in g.offers %}{{ offer_card(o) }}{% endfor %}
 {% if g.count > g.offers|length %}<p class="meta">ほか {{ g.count - g.offers|length }} 件は省略しています。</p>{% endif %}
 </details>
-{% else %}<p>比較できる候補がありませんでした。</p>{% endfor %}
+{% else %}<p>単位価格を出せる候補がありませんでした。</p>{% endfor %}
+{% if unknown_count %}<details><summary>単価不明（量を読み取れない）{{ unknown_count }}件</summary>
+{% for o in unknown_offers %}{{ offer_card(o) }}{% endfor %}
+{% if unknown_count > unknown_offers|length %}<p class="meta">ほか {{ unknown_count - unknown_offers|length }} 件は省略しています。</p>{% endif %}
+</details>{% endif %}
 {% else %}
 <h2>候補 {{ offers|length }} 件</h2>
 {% for o in offers %}{{ offer_card(o) }}{% else %}<p>条件に合う商品が見つかりませんでした。</p>{% endfor %}
@@ -135,19 +150,13 @@ def _ship(o: dict) -> str:
 
 def _qty(o: dict) -> str:
     q = o.get("quantity") or {}
-    if q.get("confidence") == "high":
-        up = o.get("unit_price")
-        return f"{q['total']}{q['unit']}" + (f"（1{q['unit']}あたり {up:,.2f}円）" if up is not None else "")
-    return "数量不明" if q.get("confidence") == "none" else "数量要確認"
-
-
-def _spec(o: dict) -> str:
-    q = o.get("quantity") or {}
-    ply = {"double": "ダブル", "single": "シングル"}.get(q.get("ply"), "ply不明")
-    ln = f"{q['length_m']:g}m" if q.get("length_m") else "長さ不明"
-    if q.get("length_label"):
-        ln += "・倍巻き/長尺表記あり"
-    return f"{ply}／{ln}"
+    if q.get("confidence") != "high":
+        return "数量不明" if q.get("confidence") == "none" else "数量要確認"
+    text = f"{q['count_total']}{q['count_unit']}"
+    if q.get("content_amount") is not None:
+        text += f" × {q['content_amount']:g}{q['content_unit']}（計 {q['measure_total']:g}{q['content_unit']}）"
+    up = o.get("unit_price")
+    return text + (f"／{o['unit_price_label']} {up:,.2f}円" if up is not None else "")
 
 
 def _safe_url(o: dict) -> bool:
@@ -157,20 +166,12 @@ def _safe_url(o: dict) -> bool:
 def render(name: str, base: str, **ctx) -> str:
     return _env.get_template(name).render(
         base=base, css=_CSS, credit=CREDIT_HTML, operator=OPERATOR_TEXT, freshness=FRESHNESS_TEXT,
-        yen=_yen, ship=_ship, qty=_qty, spec=_spec, safe_url=_safe_url, **ctx)
+        yen=_yen, ship=_ship, qty=_qty, safe_url=_safe_url, bases=basis_choices(), **ctx)
 
 
-_GROUP_LABELS = {"x": "倍巻き", "multi": "倍巻き（倍率不明）", "long": "ロング・長尺"}
+_DIMENSION_LABELS = {"count": "個数", "volume": "容量", "mass": "重さ", "length": "長さ",
+                     "power": "電力", "charge": "電池容量", "energy": "電力量"}
 
 
-def group_title(g: dict) -> str:
-    ply = {"double": "ダブル", "single": "シングル"}.get(g.get("ply"), "シングル/ダブル不明")
-    ln = f"{g['length_m']:g}m" if g.get("length_m") else "長さ不明"
-    label = g.get("length_label")
-    extra = ""
-    if label:
-        if label.startswith("x"):
-            extra = f"／{label[1:]}倍巻き"
-        else:
-            extra = "／" + _GROUP_LABELS.get(label, label)
-    return f"{ply}／{ln}{extra}"
+def group_title(g: dict, basis_label: str) -> str:
+    return f"{basis_label}で比較（{_DIMENSION_LABELS.get(g.get('dimension'), g.get('dimension'))}）"

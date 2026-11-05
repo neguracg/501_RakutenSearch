@@ -41,12 +41,15 @@ def test_lists_three_tools_with_japanese_descriptions():
         assert t.description and len(t.description) > 80
         assert any("぀" <= ch <= "ヿ" or "一" <= ch <= "鿿" for ch in t.description)
     assert "keywords" in by["search_products"].input_schema["properties"]
-    assert "required_spec" in by["compare_offers"].input_schema["properties"]
+    props = by["compare_offers"].input_schema["properties"]
+    for k in ("include_terms", "exclude_terms", "basis", "desired_quantity"):
+        assert k in props
+    assert "required_spec" not in props and "unit" not in props
     assert by["find_regular_item"].input_schema["required"] == ["regular_id"]
 
 
 def test_ac11_search_products_returns_mock_candidates():
-    r = call("search_products", {"keywords": ["トイレットペーパー ダブル 30m"]})
+    r = call("search_products", {"keywords": ["洗濯洗剤 詰め替え"]})
     assert not r.is_error
     data = r.structured_content
     assert data["ok"] and data["mock"] is True and data["returned"] > 0
@@ -56,18 +59,18 @@ def test_ac11_search_products_returns_mock_candidates():
 
 
 def test_compare_offers_via_mcp():
-    r = call("compare_offers", {"keywords": ["トイレットペーパー ダブル 30m"],
-                                "required_spec": {"ply": "double", "length_m": 30},
-                                "desired_quantity": 48})
+    r = call("compare_offers", {"keywords": ["洗濯洗剤 詰め替え"],
+                                "include_terms": ["詰め替え"], "exclude_terms": ["本体"],
+                                "basis": "g", "desired_quantity": 5000})
     c = r.structured_content["comparison"]
     assert c["cheapest_unit_price"]["quantity"]["confidence"] == "high"
     assert c["cheapest_total"] is None and c["caveats"]
 
 
 def test_find_regular_item_via_mcp():
-    r = call("find_regular_item", {"regular_id": "tp-double-30m"})
+    r = call("find_regular_item", {"regular_id": "detergent-refill"})
     d = r.structured_content
-    assert d["ok"] and d["regular"]["id"] == "tp-double-30m"
+    assert d["ok"] and d["regular"]["id"] == "detergent-refill"
 
 
 def test_find_regular_item_unknown_id_is_reported_in_result():
@@ -98,7 +101,7 @@ def test_stdio_subprocess_serves_mock_without_credentials():
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 return await session.call_tool("search_products",
-                                               {"keywords": ["トイレットペーパー"]})
+                                               {"keywords": ["洗濯洗剤"]})
     r = asyncio.run(asyncio.wait_for(go(), timeout=60))
     data = r.structured_content or json.loads(r.content[0].text)
     assert data["ok"] and data["mock"] is True and data["returned"] > 0

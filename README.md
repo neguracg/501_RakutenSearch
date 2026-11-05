@@ -1,7 +1,8 @@
 # 買い物リサーチツール / 501_RakutenSearch
 
 個人の買い物を効率化する汎用の商品検索・比較ツール。特定の商品ジャンルに限定しない。
-楽天市場の公式 API から商品を集め、入り数を読み取って単価を比べ、購入候補と商品固有 URL を返す。購入操作はしない。
+楽天市場の公式 API から商品を集め、商品名から個数と内容量（例: 洗剤 900g×6、水 2L×9本、電池 40本、パネル 100W×2）を読み取って単価を比べ、購入候補と商品固有 URL を返す。購入操作はしない。
+道具は商品の意味を持たない: 持つのは「数量の読み取りと単位換算」と「語による絞り込み（含む語・除く語）」だけで、濃縮/通常・層数・色・型番などの仕様の違いは判定しない（呼び出し側の AI と利用者が判断する）。
 仕様の正本は [docs/SPEC.md](docs/SPEC.md)。
 
 ## 現在の状態（Phase 1）
@@ -58,21 +59,23 @@ ChatGPT への登録手順（2026-11 時点。画面名は変わりうる）:
 1. 設定 → アプリとコネクタ → 詳細設定 → 開発者モードを ON
 2. 作成（コネクタを追加）
 3. URL に `https://app.negura.website/kaimono/mcp` を入力、認証は「なし」にして作成
-4. チャットで「楽天で○○を探して。ダブル30mで1ロールあたりの最安を比べて」と頼む
+4. チャットで「楽天で洗濯洗剤の詰め替えを探して。100gあたりの最安を比べて」「単3電池を1本あたりで比べて」「ミネラルウォーター2Lを100mlあたりで」のように頼む（含む語・除く語・比べる単位は AI が指定する）
 
 Claude・Codex など他の MCP クライアントも同じ URL を登録すればよい。ローカル確認: 上の uvicorn を起動し `http://127.0.0.1:8000/kaimono/mcp` を登録する。
 
 ## 使い方（CLI）
 
 ```
-.venv\Scripts\python cli.py search "トイレットペーパー ダブル 30m" "トイレットペーパー 12ロール" --mock
-.venv\Scripts\python cli.py compare "トイレットペーパー ダブル 30m" --ply double --length-m 30 --desired-quantity 48 --mock
-.venv\Scripts\python cli.py regular tp-double-30m --regulars examples\regulars.sample.json --mock
+.venv\Scripts\python cli.py search "洗濯洗剤 詰め替え" "単3電池" --mock
+.venv\Scripts\python cli.py compare "洗濯洗剤 詰め替え" --include 詰め替え --exclude 本体 --basis g --desired-quantity 5000 --mock
+.venv\Scripts\python cli.py compare "単3電池" --basis 個 --mock
+.venv\Scripts\python cli.py compare "ミネラルウォーター" --include 2L --basis ml --mock
+.venv\Scripts\python cli.py regular detergent-refill --regulars examples\regulars.sample.json --mock
 ```
 
 - `--mock` を付ける（または環境変数 `SHOPPING_MOCK=1`）と、架空データ（`src/shopping/mock_data.json`）を返し、API を呼ばない。付けないと実 API を呼ぶ。
 - `--json` で整形済み JSON。キーワードは 1 回 5 個まで、ページは語ごとに 3 ページまで、リクエスト間隔は 1 秒以上。
-- 比較は「商品価格」「単位価格」「支払総額」「必要数量を満たす最安」を分けて出す。送料が不明な候補があると支払総額の最安は断定せず、理由を表示する。シングル/ダブル・長さの違う商品は別の束にする。
+- 比較は「商品価格」「単位価格」「支払総額」「必要数量を満たす最安」を分けて出す。送料が不明な候補があると支払総額の最安は断定せず、理由を表示する。単価は `--basis`（個・ml・g・m・W・mAh・Wh。L・kg などの別名も可。省略で自動）あたりで出し、その量を読み取れない候補は「単価不明」として最安判定から外す。`--include` は商品名に全部含む語、`--exclude` は含んだら外す語。仕様の違い（濃縮・層数・型番・色など）は判定しないので、結果の商品名で確認する。
 
 ## 使い方（MCP サーバー）
 
@@ -94,7 +97,7 @@ env:     PYTHONPATH=<このリポジトリ>\src, SHOPPING_MOCK=1   （実 API �
 
 ## 定番品マスタ
 
-`data/regulars.json`（git 管理外。個人の購入リストのため）に置く。見本は `examples/regulars.sample.json`。価格・在庫は保存せず、検索のたびに取り直す。置き場は環境変数 `SHOPPING_REGULARS_PATH` でも指定できる。
+`data/regulars.json`（git 管理外。個人の購入リストのため）に置く。見本は `examples/regulars.sample.json`（洗剤・電池・水の3カテゴリ）。項目は `include_terms` / `exclude_terms` / `basis` / `desired_quantity` / `keywords` など（`required_spec` と `unit` は廃止）。価格・在庫は保存せず、検索のたびに取り直す。置き場は環境変数 `SHOPPING_REGULARS_PATH` でも指定できる。
 
 ## 試験
 

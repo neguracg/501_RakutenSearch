@@ -169,7 +169,7 @@ def _token_re(unit_keys: tuple[str, ...], counter_keys: tuple[str, ...]):
         rf"(?P<num>{_NUM})\s*(?:(?P<unit>{_alt(unit_keys)})(?!サイズ)|(?P<counter>{_alt(counter_keys)}))")
 
 
-_BARE_RE = re.compile(r"(?:[×*]|(?<![a-z])x)\s*(\d+)(?![\d.]|\s*[a-z])")
+_BARE_RE = re.compile(r"(?:[×*]|(?<![a-z])x)\s*(\d+)(?![\d.]|[a-z])")
 
 
 def _num(text: str) -> float:

@@ -31,13 +31,13 @@ class Clock:
 
 
 def offers():
-    return [make_offer("a", "トイレットペーパー ダブル 30m 12ロール×4袋", 2400, shipping_status="included"),
-            make_offer("b", "トイレットペーパー ダブル 2倍巻き 12ロール", 1500, shipping_status="separate"),
-            make_offer("c", "トイレットペーパー シングル 12ロール", 700, shipping_status="unknown")]
+    return [make_offer("a", "洗濯洗剤 詰め替え 900g×4袋", 2400, shipping_status="included"),
+            make_offer("b", "洗濯洗剤 詰め替え 1.5kg", 1500, shipping_status="separate"),
+            make_offer("c", "洗濯洗剤 本体 400g", 700, shipping_status="unknown")]
 
 
 def fake(pages=None):
-    return FakeAdapter(pages or {("トイレットペーパー", 1): (offers(), 3)})
+    return FakeAdapter(pages or {("洗濯洗剤", 1): (offers(), 3)})
 
 
 @pytest.fixture(autouse=True)
@@ -59,7 +59,7 @@ def attr_urls(html):
     return re.findall(r'(?:href|action|formaction|src)="([^"]*)"', html)
 
 
-PATHS = ["/", "/search?q=トイレットペーパー", "/compare?q=トイレットペーパー"]
+PATHS = ["/", "/search?q=洗濯洗剤", "/compare?q=洗濯洗剤"]
 
 
 @pytest.mark.parametrize("base", ["", "/kaimono"])
@@ -90,8 +90,10 @@ def test_index_has_form_with_both_modes():
     c, _, _ = make_client("/kaimono")
     html = c.get("/kaimono/").text
     assert 'formaction="/kaimono/search"' in html and 'formaction="/kaimono/compare"' in html
-    for name in ("q", "ng", "min_price", "max_price"):
+    for name in ("q", "ng", "min_price", "max_price", "include", "exclude", "basis"):
         assert f'name="{name}"' in html
+    for unit in ("個", "ml", "g", "m", "W", "mAh", "Wh"):
+        assert f'<option value="{unit}"' in html
 
 
 def test_footer_credit_operator_and_freshness_on_every_page():
@@ -99,9 +101,9 @@ def test_footer_credit_operator_and_freshness_on_every_page():
     c, _, _ = make_client("/kaimono", limiter=RateLimiter(limit=1))
     pages = [c.get("/kaimono" + p) for p in PATHS[:2]]          # 2 件目で 429 になる想定
     pages += [c.get("/kaimono/search"), c.get("/kaimono/nothing")]  # 400 と 404
-    c2, _, _ = make_client("/kaimono", adapter=fake({("トイレットペーパー", 1): AdapterError("http_429")}))
-    pages.append(c2.get("/kaimono/search?q=トイレットペーパー"))      # 503
-    pages.append(c.get("/kaimono/compare?q=トイレットペーパー"))
+    c2, _, _ = make_client("/kaimono", adapter=fake({("洗濯洗剤", 1): AdapterError("http_429")}))
+    pages.append(c2.get("/kaimono/search?q=洗濯洗剤"))      # 503
+    pages.append(c.get("/kaimono/compare?q=洗濯洗剤"))
     assert {p.status_code for p in pages} >= {200, 400, 404, 429, 503}
     for r in pages:
         assert CREDIT_HTML in r.text, r.status_code
@@ -118,27 +120,28 @@ def test_external_links_only_rakuten():
 
 
 def test_item_link_opens_new_tab_noopener_and_non_rakuten_url_is_not_linked():
-    bad = make_offer("z", "トイレットペーパー ダブル 12ロール", 900)
+    bad = make_offer("z", "洗濯洗剤 詰め替え 900g", 900)
     bad.item_url = "https://evil.example.com/x"
     bad.item_url_status = "needs_review"
-    c, _, _ = make_client("/kaimono", adapter=fake({("トイレットペーパー", 1): ([bad] + offers(), 4)}))
-    html = c.get("/kaimono/search?q=トイレットペーパー").text
+    c, _, _ = make_client("/kaimono", adapter=fake({("洗濯洗剤", 1): ([bad] + offers(), 4)}))
+    html = c.get("/kaimono/search?q=洗濯洗剤").text
     assert 'target="_blank" rel="noopener"' in html
     assert "evil.example.com" not in html
 
 
 def test_compare_shows_caveats_notes_groups_and_label_split():
     c, _, _ = make_client("/kaimono")
-    html = c.get("/kaimono/compare?q=トイレットペーパー").text
+    html = c.get("/kaimono/compare?q=洗濯洗剤").text
     assert "断定できない理由・注意" in html and "送料が不明" in html
     assert "注意・出典" in html and "楽天市場" in html
-    assert "倍巻き" in html   # 倍巻き品は別グループ
+    assert "100gあたり" in html and "洗濯洗剤 詰め替え 1.5kg" in html     # 単位あたりの比較（基準は表示に出る）
+    assert "仕様の違い（濃縮・層数・型番・色など）は判定していません" in html   # 常設の注意
 
 
 def test_search_fixed_pages_and_hits():
     ad = fake()
     c, _, _ = make_client("", adapter=ad)
-    c.get("/search?q=トイレットペーパー&pages=3&hits=5")
+    c.get("/search?q=洗濯洗剤&pages=3&hits=5")
     assert ad.calls and all(kw.get("page") == 1 and kw.get("hits") == 30 for _, kw in ad.calls)
 
 
@@ -173,22 +176,22 @@ def test_rate_limit_per_ip_returns_429_and_other_ip_still_ok():
     clock = Clock()
     c, _, _ = make_client("/kaimono", limiter=RateLimiter(limit=3, clock=clock), clock=clock)
     h = {"CF-Connecting-IP": "203.0.113.5"}
-    codes = [c.get("/kaimono/search?q=トイレットペーパー", headers=h).status_code for _ in range(4)]
+    codes = [c.get("/kaimono/search?q=洗濯洗剤", headers=h).status_code for _ in range(4)]
     assert codes == [200, 200, 200, 429]
-    r = c.get("/kaimono/search?q=トイレットペーパー", headers=h)
+    r = c.get("/kaimono/search?q=洗濯洗剤", headers=h)
     assert r.status_code == 429 and int(r.headers["retry-after"]) >= 1 and "少し待って" in r.text
-    assert c.get("/kaimono/search?q=トイレットペーパー", headers={"CF-Connecting-IP": "203.0.113.9"}).status_code == 200
+    assert c.get("/kaimono/search?q=洗濯洗剤", headers={"CF-Connecting-IP": "203.0.113.9"}).status_code == 200
     clock.t += 61
-    assert c.get("/kaimono/search?q=トイレットペーパー", headers=h).status_code == 200
+    assert c.get("/kaimono/search?q=洗濯洗剤", headers=h).status_code == 200
 
 
 def test_rate_limit_ignores_invalid_forwarded_ip_header():
     clock = Clock()
     c, _, _ = make_client("", limiter=RateLimiter(limit=1, clock=clock), clock=clock)
     h = {"CF-Connecting-IP": "not-an-ip"}
-    assert c.get("/search?q=トイレットペーパー", headers=h).status_code == 200
+    assert c.get("/search?q=洗濯洗剤", headers=h).status_code == 200
     h2 = {"CF-Connecting-IP": "also-bad"}
-    assert c.get("/search?q=トイレットペーパー", headers=h2).status_code == 429  # 同じ接続元として数える
+    assert c.get("/search?q=洗濯洗剤", headers=h2).status_code == 429  # 同じ接続元として数える
 
 
 def test_healthz_and_index_are_not_rate_limited():
@@ -200,30 +203,30 @@ def test_healthz_and_index_are_not_rate_limited():
 def test_cache_second_identical_search_does_not_call_adapter():
     ad = fake()
     c, _, ga = make_client("", adapter=ad)
-    c.get("/search?q=トイレットペーパー")
-    c.get("/compare?q=トイレットペーパー")
-    c.get("/search?q=トイレットペーパー")
+    c.get("/search?q=洗濯洗剤")
+    c.get("/compare?q=洗濯洗剤")
+    c.get("/search?q=洗濯洗剤")
     assert len(ad.calls) == 1 and ga.api_calls == 1
 
 
 def test_cache_key_includes_filters():
     ad = fake()
     c, _, _ = make_client("", adapter=ad)
-    c.get("/search?q=トイレットペーパー")
-    c.get("/search?q=トイレットペーパー&max_price=1000")
+    c.get("/search?q=洗濯洗剤")
+    c.get("/search?q=洗濯洗剤&max_price=1000")
     assert len(ad.calls) == 2
 
 
 @pytest.mark.parametrize("kind,status", [("http_429", 503), ("timeout", 503), ("busy", 503),
                                          ("http_403", 503), ("missing_credentials", 503)])
 def test_adapter_errors_become_friendly_pages_without_leaking(kind, status):
-    c, _, _ = make_client("/kaimono", adapter=fake({("トイレットペーパー", 1): AdapterError(kind)}))
+    c, _, _ = make_client("/kaimono", adapter=fake({("洗濯洗剤", 1): AdapterError(kind)}))
     for p in ("/search", "/compare"):
-        r = c.get("/kaimono" + p + "?q=トイレットペーパー")
+        r = c.get("/kaimono" + p + "?q=洗濯洗剤")
         assert r.status_code == status
         for leak in (kind, SECRET_ID, SECRET_KEY, "Traceback", "AdapterError"):
             assert leak not in r.text
-    r = c.get("/kaimono/search?q=トイレットペーパー")
+    r = c.get("/kaimono/search?q=洗濯洗剤")
     assert ("混雑" in r.text) == (kind in ("http_429", "timeout", "busy"))
 
 
@@ -270,7 +273,7 @@ def test_mock_mode_notes_and_guarded_mock_detection(monkeypatch):
     assert ga.is_mock
     app = create_app("", Gate(ga, RateLimiter(limit=100, clock=clock)))
     c = TestClient(app)
-    r = c.get("/search", params={"q": "トイレットペーパー"})
+    r = c.get("/search", params={"q": "洗濯洗剤"})
     assert r.status_code == 200 and "架空" in r.text
 
 
@@ -283,3 +286,29 @@ def test_healthz_does_not_call_api_and_reports_missing_credentials(monkeypatch):
     c, _, _ = make_client("", adapter=ad)
     r = c.get("/healthz")
     assert r.json() == {"ok": True, "credentials": False} and ad.calls == []
+
+
+# --- WP3: 含む語・除く語・比べる単位 ---
+
+def test_compare_passes_include_exclude_basis_and_shows_notes():
+    c, _, _ = make_client("")
+    html = c.get("/compare", params={"q": "洗濯洗剤", "include": "詰め替え", "exclude": "1.5kg",
+                                     "basis": "g"}).text
+    assert "洗濯洗剤 詰め替え 900g×4袋" in html
+    assert "洗濯洗剤 詰め替え 1.5kg" not in html and "洗濯洗剤 本体 400g" not in html
+    assert "含む語で除外: 1件" in html and "除く語で除外: 1件" in html
+
+
+def test_compare_basis_alias_and_piece_basis():
+    c, _, _ = make_client("")
+    assert "100mlあたり" not in c.get("/compare", params={"q": "洗濯洗剤", "basis": "個"}).text
+    assert "1個あたり" in c.get("/compare", params={"q": "洗濯洗剤", "basis": "個"}).text
+    assert "100gあたり" in c.get("/compare", params={"q": "洗濯洗剤", "basis": "kg"}).text
+
+
+@pytest.mark.parametrize("basis", ["ふしぎ", "1個"])
+def test_compare_invalid_basis_is_400_and_does_not_call_api(basis):
+    ad = fake()
+    c, _, _ = make_client("", adapter=ad)
+    assert c.get("/compare", params={"q": "洗濯洗剤", "basis": basis}).status_code == 400
+    assert ad.calls == []

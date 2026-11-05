@@ -20,34 +20,34 @@ class Clock:
 
 
 def offers():
-    return [make_offer("a", "トイレットペーパー ダブル 30m 12ロール×4袋", 2400, shipping_status="included")]
+    return [make_offer("a", "洗濯洗剤 詰め替え 900g×4袋", 2400, shipping_status="included")]
 
 
 def fake(pages=None):
-    return FakeAdapter(pages or {("トイレットペーパー", 1): (offers(), 3)})
+    return FakeAdapter(pages or {("洗濯洗剤", 1): (offers(), 3)})
 
 
 def test_cache_expires_after_ttl_and_ttl_is_capped_at_24h():
     clock = Clock()
     ad = fake()
     ga = GuardedAdapter(ad, clock=clock, sleep=clock.sleep)
-    ga.search("トイレットペーパー", page=1, hits=30)
+    ga.search("洗濯洗剤", page=1, hits=30)
     clock.t += 599
-    ga.search("トイレットペーパー", page=1, hits=30)
+    ga.search("洗濯洗剤", page=1, hits=30)
     assert len(ad.calls) == 1
     clock.t += 2
-    ga.search("トイレットペーパー", page=1, hits=30)
+    ga.search("洗濯洗剤", page=1, hits=30)
     assert len(ad.calls) == 2
     assert GuardedAdapter(ad, ttl=10 ** 9)._ttl <= 24 * 3600
 
 
 def test_cache_returns_copies_and_is_bounded():
     clock = Clock()
-    ad = fake({("トイレットペーパー", 1): (offers(), 3)})
+    ad = fake({("洗濯洗剤", 1): (offers(), 3)})
     ga = GuardedAdapter(ad, max_entries=2, clock=clock, sleep=clock.sleep)
-    o1, _ = ga.search("トイレットペーパー", page=1, hits=30)
+    o1, _ = ga.search("洗濯洗剤", page=1, hits=30)
     o1[0].price = 1
-    o2, _ = ga.search("トイレットペーパー", page=1, hits=30)
+    o2, _ = ga.search("洗濯洗剤", page=1, hits=30)
     assert o2[0].price == 2400
     for k in ("x1", "x2", "x3"):
         ga.search(k, page=1, hits=30)
@@ -116,7 +116,7 @@ def test_too_many_waiters_or_wait_timeout_gives_busy():
 def test_cache_hit_is_served_even_while_another_call_holds_the_api_lock():
     clock = Clock()
     ga = GuardedAdapter(fake(), wait_timeout=0.01, clock=clock, sleep=clock.sleep)
-    ga.search("トイレットペーパー", page=1, hits=30)
+    ga.search("洗濯洗剤", page=1, hits=30)
     ga._call_lock.acquire()   # 別の人の API 呼び出し中を模す
-    offers_, count = ga.search("トイレットペーパー", page=1, hits=30)   # キャッシュは待たずに返る
+    offers_, count = ga.search("洗濯洗剤", page=1, hits=30)   # キャッシュは待たずに返る
     assert count == 3 and offers_

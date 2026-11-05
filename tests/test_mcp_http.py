@@ -31,9 +31,9 @@ class Clock:
 
 
 def pages():
-    offers = [make_offer("a", "トイレットペーパー ダブル 30m 12ロール×4袋", 2400, shipping_status="included"),
-              make_offer("b", "トイレットペーパー ダブル 30m 12ロール×6袋", 3000, shipping_status="included")]
-    return {("トイレットペーパー", 1): (offers, 2)}
+    offers = [make_offer("a", "洗濯洗剤 詰め替え 900g×4袋", 2400, shipping_status="included"),
+              make_offer("b", "洗濯洗剤 詰め替え 900g×6袋", 3000, shipping_status="included")]
+    return {("洗濯洗剤", 1): (offers, 2)}
 
 
 @pytest.fixture(autouse=True)
@@ -82,8 +82,8 @@ def test_initialize_list_tools_and_call_compare(base):
 
     async def work(c):
         tools = (await c.list_tools()).tools
-        r = await c.call_tool("compare_offers", {"keywords": ["トイレットペーパー"],
-                                                 "required_spec": {"ply": "double", "length_m": 30}})
+        r = await c.call_tool("compare_offers", {"keywords": ["洗濯洗剤"],
+                                                 "include_terms": ["詰め替え"], "basis": "g"})
         return tools, r
 
     tools, r = run_session(app, base, work)
@@ -98,9 +98,9 @@ def test_tool_results_carry_credit_operator_and_web_for_both_tools():
     app, _ = make_app("/kaimono")
 
     async def work(c):
-        a = await c.call_tool("search_products", {"keywords": ["トイレットペーパー"]})
-        b = await c.call_tool("compare_offers", {"keywords": ["トイレットペーパー"]})
-        bad = await c.call_tool("compare_offers", {"keywords": ["トイレットペーパー"], "desired_quantity": -1})
+        a = await c.call_tool("search_products", {"keywords": ["洗濯洗剤"]})
+        b = await c.call_tool("compare_offers", {"keywords": ["洗濯洗剤"]})
+        bad = await c.call_tool("compare_offers", {"keywords": ["洗濯洗剤"], "desired_quantity": -1})
         return a, b, bad
 
     for r in run_session(app, "/kaimono", work):
@@ -129,7 +129,7 @@ def test_find_regular_item_is_not_callable_on_public_endpoint():
 
     async def work(c):
         try:
-            r = await c.call_tool("find_regular_item", {"regular_id": "tp-double-30m"})
+            r = await c.call_tool("find_regular_item", {"regular_id": "detergent-refill"})
         except Exception as exc:  # 未知のツールは MCPError か is_error のどちらでも可
             return str(exc)
         return r
@@ -142,7 +142,7 @@ def test_find_regular_item_is_not_callable_on_public_endpoint():
 
 
 async def _search(c):
-    return await c.call_tool("search_products", {"keywords": ["トイレットペーパー"]})
+    return await c.call_tool("search_products", {"keywords": ["洗濯洗剤"]})
 
 
 def test_mcp_shares_the_same_rate_limit_and_cache_as_web():
@@ -170,20 +170,20 @@ def test_web_and_mcp_count_against_the_same_ip_budget():
     app, _ = make_app("/kaimono", limit=2)
     web = TestClient(app, raise_server_exceptions=False)
     h = {"CF-Connecting-IP": "203.0.113.20"}
-    assert web.get("/kaimono/search?q=トイレットペーパー", headers=h).status_code == 200
-    assert web.get("/kaimono/search?q=トイレットペーパー", headers=h).status_code == 200
+    assert web.get("/kaimono/search?q=洗濯洗剤", headers=h).status_code == 200
+    assert web.get("/kaimono/search?q=洗濯洗剤", headers=h).status_code == 200
 
     out = run_session(app, "/kaimono", _search, headers=h)
     assert out.structured_content["error"]["kind"] == "rate_limited"
 
 
 def test_pages_argument_is_clamped_with_note():
-    offers = pages()[("トイレットペーパー", 1)][0]
-    app, ad = make_app("", adapter=FakeAdapter({("トイレットペーパー", 1): (offers, 100),
-                                               ("トイレットペーパー", 2): (offers, 100)}))
+    offers = pages()[("洗濯洗剤", 1)][0]
+    app, ad = make_app("", adapter=FakeAdapter({("洗濯洗剤", 1): (offers, 100),
+                                               ("洗濯洗剤", 2): (offers, 100)}))
 
     async def work(c):
-        return await c.call_tool("search_products", {"keywords": ["トイレットペーパー"], "pages": 3})
+        return await c.call_tool("search_products", {"keywords": ["洗濯洗剤"], "pages": 3})
 
     d = run_session(app, "", work).structured_content
     assert d["ok"] and any("1 ページ" in n for n in d["notes"])
@@ -191,10 +191,10 @@ def test_pages_argument_is_clamped_with_note():
 
 
 def test_upstream_errors_do_not_leak_keys_and_still_carry_credit():
-    app, _ = make_app("", adapter=FakeAdapter({("トイレットペーパー", 1): AdapterError("http_429")}))
+    app, _ = make_app("", adapter=FakeAdapter({("洗濯洗剤", 1): AdapterError("http_429")}))
 
     async def work(c):
-        return await c.call_tool("compare_offers", {"keywords": ["トイレットペーパー"]})
+        return await c.call_tool("compare_offers", {"keywords": ["洗濯洗剤"]})
 
     r = run_session(app, "", work)
     blob = json.dumps(r.structured_content, ensure_ascii=False)
