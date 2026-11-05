@@ -8,6 +8,7 @@
 - 道具は商品の意味を持たない（SPEC §7・§8）。持つのは「個数×内容量の読み取りと単位換算（quantity.py の UNITS / DISPLAY / COUNTERS 表）」と「含む語・除く語での絞り込み」だけ。仕様の違い（濃縮・層数・型番・色など）は判定せず、数量は商品名からの読み取りで誤ることがある旨とあわせて、caveats に常に2行出す。
 
 ## 次にやること（順番）
+0. **WP8（E2E 80件の数量の誤読6件・半角1文字の語の HTTP 400）は master マージ済み・本番未反映**（051a634・verifier 3回で高信頼の新しい誤り0）。並走中の公開MCP全件化セッションと順番を合わせて VPS へ再デプロイ → 腱さんの ChatGPT で E2E 80件を再実施（実題名での単価不明率も測る）。商品の種類・仕様の扱いは消込表 #934 の回答待ち。
 1. ChatGPT（Plus）からの実接続（消込表 #923。腱さん）。
 2. 実題名での高信頼の誤り率の測定（公開アプリで10検索語程度。high の個数・総量を目視）と、WP7 の verifier レビュー。
 3. フォルダ改名 501_RakutenSearch → 501_ShoppingSearch（消込表 #926。他セッションが止まっている時に）。キットは `C:\Claude\102_ClaudeUnyou\unyou\rename-501_ShoppingSearch\`。腱さんがアプリを完全終了 → `rename-folder.bat` → YES。その後 `POST-RENAME-TODO.md` を消し込む（GitHub 側は改名済み）。
