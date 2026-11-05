@@ -48,6 +48,7 @@ COUNTERS: dict[str, str] = {
     "粒": "粒", "ケース": "ケース", "玉": "玉", "束": "束", "巻": "巻", "食": "食", "回分": "回分",
     "点": "点", "冊": "冊", "ペア": "ペア", "ヶ": "個", "ダース": "個",
     "P": "パック", "pc": "個", "pcs": "個",
+    "コ": "個", "ケ": "個", "膳": "膳",
 }
 
 # 数え語の倍率（別名 → 倍）。ダースは 12 個。ただし内側の個数がある時（12本入り 2ダース）は袋数と同じ扱いで倍率を掛けない
@@ -59,6 +60,14 @@ SERVING_WORDS = frozenset({"回分"})
 # 「12ロール 4パック」のように空白だけで続けても掛け算にする、入れ物を表す数え語
 CONTAINERS = frozenset({"パック", "袋", "セット", "ケース", "梱"})
 
+# P4: 同じ数が続く時に「外側の入れ物」として掛け算にする容器語（3個入り 3セット → 9）
+OUTER_WORDS = frozenset({"セット", "ケース", "パック", "箱", "袋"})
+
+# 数え語としての条件が文脈で変わる語（P3・X1）。表の別名（正規化後）で持つ
+MONTH_COUNTERS = frozenset({"ヶ", "ケ"})       # 直後が「月」なら期間（12ヶ月保証）で個数ではない
+SOLO_LOW_COUNTERS = frozenset({"P"})           # ×・入数に続かない単独の NP は high にしない（60P 対応）
+MAX_PACK_P = 99                                # P は 1〜99 だけ個数の候補（1080P は画質）
+
 MAX_PLAUSIBLE_COUNT = 100_000
 MAX_DIGITS = 9                      # 数値は千区切りを除いて 9 桁まで（S6）
 
@@ -66,6 +75,8 @@ _FILL = r"(?:入り?|入数|セット|組|パック|袋|箱|ケース|梱|各|�
 _GAP_X = re.compile(rf"\s*(?:{_FILL}\s*)*[×x*]\s*")
 _GAP_LABEL = re.compile(rf"\s*(?:{_FILL}\s*)*[×x*]\s*[^\d×x*\s]{{0,4}}\s*")
 _GAP_PLAIN = re.compile(r"\s*(?:(?:入り?|入数|約|各)\s*)*")
+# 個数と内容量のあいだ（2枚組 34cm）。数え語の間（_GAP_PLAIN）より読み飛ばす語を広げる
+_GAP_COUNT_MEASURE = re.compile(rf"\s*(?:(?:入り?|入数|約|各|セット|組|パック|袋|箱|ケース|梱|の)\s*)*")
 # 数値の形。桁数の検査は _tokens 側で行う（9 桁を超える数は数量にせず low。出店者の書いた巨大な数字列で
 # float が inf になり int() が落ちる事故も防ぐ）
 _NUM = r"(?<![\d.,])\d[\d,]*(?:\.\d+)?"
@@ -193,6 +204,7 @@ class _Tok:
     word: str = ""            # count: 正規の数え語
     dim: str = ""             # measure: 次元
     mult: int = 1             # count: 数え語の倍率（ダース=12）
+    solo_low: bool = False    # count: 単独だと high にしない数え語（P。X1）
 
 
 @dataclass
@@ -221,9 +233,12 @@ def _alt(keys) -> str:
 @functools.lru_cache(maxsize=8)
 def _token_re(unit_keys: tuple[str, ...], counter_keys: tuple[str, ...]):
     return re.compile(
-        rf"(?P<num>{_NUM})\s*(?:(?P<unit>{_alt(unit_keys)})(?!サイズ)|(?P<counter>{_alt(counter_keys)}))")
+        rf"(?P<num>{_NUM})\s*(?:(?P<unit>{_alt(unit_keys)})(?!サイズ)|(?P<counter>{_alt(counter_keys)})(?!ー))")
 
 
+_IRI_AFTER = re.compile(r"\s*入")
+_P_NOT_COUNT = re.compile(r"\s*(?:還元|倍|up|アップ|ポイント|増量)")
+_TEN_NOT_COUNT = re.compile(r"\s*(?:購入|以上|まで|で)")
 _BARE_RE = re.compile(r"(?:[×*]|(?<![a-z])x)\s*(\d+)(?![\d.]|[a-z])")
 # 数字の直後に続く語（表にあるかどうかは別途判定する）
 _WORD_AFTER_NUM = re.compile(r"(?<![\d.,])(\d{1,9})([^\W\d_]+)")
@@ -247,6 +262,8 @@ def _tokens(s: str, flags: list[str]) -> list[_Tok]:
     """flags に "oversize"（桁が多すぎる数）を積む。"""
     units, counters, mults = _unit_table(), _counter_table(), _multiplier_table()
     rx = _token_re(tuple(units), tuple(counters))
+    months = {_norm(w) for w in MONTH_COUNTERS}
+    solo_low = {_norm(w) for w in SOLO_LOW_COUNTERS}
     toks: list[_Tok] = []
     for m in rx.finditer(s):
         a = m.start("num")
@@ -274,8 +291,16 @@ def _tokens(s: str, flags: list[str]) -> list[_Tok]:
             if value != int(value):
                 continue
             key = m.group("counter")
-            toks.append(_Tok("count", a, m.end(), n=int(value), word=counters[key],
-                             mult=mults.get(key, 1)))
+            word = counters[key]
+            if key in solo_low and not (1 <= value <= MAX_PACK_P
+                                        and not _P_NOT_COUNT.match(s, m.end())):
+                continue                             # 1080P・10P還元は個数ではない（P3・X1）
+            if key in months and s[m.end():m.end() + 1] == "月":
+                continue                             # 12ヶ月保証・3ヶ月分は期間（P3）
+            if word == "点" and _TEN_NOT_COUNT.match(s, m.end()):
+                continue                             # 2点購入・3点以上は販促（P3）
+            toks.append(_Tok("count", a, m.end(), n=int(value), word=word,
+                             mult=mults.get(key, 1), solo_low=key in solo_low))
     taken = {t.start for t in toks}
     for m in _BARE_RE.finditer(s):
         if m.start(1) in taken:
@@ -305,11 +330,17 @@ def _unknown_counter(s: str) -> bool:
     return False
 
 
-def _joins(s: str, p: _Tok, t: _Tok, group_measures: list[_Tok]) -> bool:
+def _joins(s: str, p: _Tok, t: _Tok, g: _Group, flags: list[str],
+           t_chain: tuple[int, int]) -> bool:
+    """t を直前のトークン p と同じ鎖（グループ）に入れるか。g は p までの鎖。
+    t_chain は t が新しい鎖の先頭だった時のその鎖の（個数の積, 因子数）（4ロール×6パック → (24, 2)）。
+    flags に "ambiguous"（同数・別の数え語で積か言い直しか決められない）を積む。"""
     gap = s[p.end:t.start]
     if t.kind == "bare":
         return bool(_GAP_X.fullmatch(gap))
-    if t.kind == "measure" and group_measures:
+    if t.solo_low and not (_GAP_X.fullmatch(gap) or ("入" in gap and _GAP_PLAIN.fullmatch(gap))):
+        return False                 # NP は ×の直後・入数の直後でだけ連結する（X1・X5）
+    if t.kind == "measure" and g.measures:
         # 内容量は 1 グループに 1 つ（寸法は同じ次元を × でつなぐ時だけ）
         return p.kind == "measure" and p.dim == t.dim and bool(_GAP_LABEL.fullmatch(gap))
     if p.kind == "measure" and t.kind == "measure":
@@ -319,39 +350,82 @@ def _joins(s: str, p: _Tok, t: _Tok, group_measures: list[_Tok]) -> bool:
     if p.kind == "count" and t.kind == "count":
         if _GAP_X.fullmatch(gap):
             return True
-        if not _GAP_PLAIN.fullmatch(gap):
+        if not _GAP_COUNT_MEASURE.fullmatch(gap):
             return False
-        if "入" in gap or t.word in CONTAINERS:
+        facs = g.factors
+        t_total, t_facs = t_chain
+        if facs and t_total == _total(g):
+            # P1: 鎖の積と等しい後続は総数の言い直し（12ロール×4パック 48ロール）。因子にしない。
+            # ただし鎖が 1 因子で数が偶然同じ時（3個入り 3セット）は、外側が容器語なら掛け算（P4）、
+            # そうでなければ積か言い直しか決められない（X4）ので単価不明に倒す。同じ数え語なら言い直し
+            if (len(facs) == 1 and t_facs == 1 and facs[0].mult == 1 and t_total != 1
+                    and t.word != facs[0].word):
+                if t.word in OUTER_WORDS:
+                    return True
+                flags.append("ambiguous")
+            return False
+        if "入" in gap or (t.word in CONTAINERS and all(f.word != t.word for f in facs)):
             return True
+        # 外側「5箱」のあとに内側「60個入」が来る順は、W1（内側→外側）とは逆で、積か説明か決められない
+        if p.n != 1 and _IRI_AFTER.match(s, t.end) and not _IRI_AFTER.match(s, p.end):
+            flags.append("ambiguous")
+            return False
         # ×の無い2段の数え語「500枚 5冊」「12本入り 2ダース」（W1）。先頭が 1 の「1箱 24本」は
-        # 1 個あたりの説明なので連結しない。同じ数え語の言い直し（12本 12本入り）も連結しない
+        # 1 個あたりの説明なので連結しない。同じ数え語の言い直し（12本 12本入り）も連結しない。
+        # すでに 2 因子以上ある鎖には足さない（P2）
+        if len(facs) > 1:
+            return False
         return p.n != 1 and (p.word != t.word or t.mult > 1)
-    return bool(_GAP_X.fullmatch(gap) or _GAP_PLAIN.fullmatch(gap))
+    plain = _GAP_COUNT_MEASURE if {p.kind, t.kind} == {"count", "measure"} else _GAP_PLAIN
+    return bool(_GAP_X.fullmatch(gap) or plain.fullmatch(gap))
 
 
-def _group(s: str, toks: list[_Tok]) -> list[_Group]:
+_LOOKAHEAD = 8          # 先読みする鎖の最大トークン数（商品名の鎖はこれより短い）
+
+
+def _group(s: str, toks: list[_Tok], flags: list[str]) -> list[_Group]:
+    # 各トークンが「新しい鎖の先頭」だったら、その鎖の（個数の積, 因子数）はいくつか。後ろから求める。
+    # t の側が積（4ロール×6パック×2ケース）の時、前の記述（48個）がその言い直しかを積で判定するため
+    ahead: list[tuple[int, int]] = [(1, 0)] * len(toks)
+    for i in range(len(toks) - 1, -1, -1):
+        g = _Group([toks[i]])
+        for j in range(i + 1, min(len(toks), i + _LOOKAHEAD)):
+            if not _joins(s, g.toks[-1], toks[j], g, [], ahead[j]):
+                break
+            g.toks.append(toks[j])
+        ahead[i] = (_total(g), len(g.factors))
     groups: list[_Group] = []
-    for t in toks:
-        if groups and _joins(s, groups[-1].toks[-1], t, groups[-1].measures):
+    for i, t in enumerate(toks):
+        if groups and _joins(s, groups[-1].toks[-1], t, groups[-1], flags, ahead[i]):
             groups[-1].toks.append(t)
         elif t.kind != "bare":      # 直前に何も無い「×6」は個数にしない
             groups.append(_Group([t]))
+        else:
+            flags.append("orphan_times")      # 読み飛ばした記述の後ろの「×2」など。倍数が落ちている恐れ
     return groups
 
 
-def _drop_restated(g: _Group) -> _Group:
+def _drop_restated(g: _Group, flags: list[str]) -> _Group:
     """内容量の後ろで、内容量より前に書かれた個数と同じ数が出てきたら言い直し（二重に掛けない。S2）。
-    例: 24本 (500ml×24) / 6袋 900g×6 / 2袋 (5kg×2袋)。"""
-    before: set[float] = set()
+    例: 24本 (500ml×24) / 6袋 900g×6 / 2袋 (5kg×2袋)。ただし先の数え語と違う容器語で同数なら掛け算（P4。
+    3個入り 400ml×3セット → 9）。"""
+    before: dict[float, str] = {}
     seen_measure = False
     kept: list[_Tok] = []
     for t in g.toks:
         if t.kind == "measure":
             seen_measure = True
         elif seen_measure and t.n in before:
-            continue
+            # P4: 同じ数でも、先に書かれた数え語と違う容器語（袋・セット・ケース・パック）なら外側の掛け算。
+            # 容器語でない別の数え語（3個入り 400ml×3冊）は積か言い直しか決められない（X4）
+            if t.kind == "count" and t.n != 1 and t.word != before[t.n] and t.mult == 1:
+                if t.word not in OUTER_WORDS:
+                    flags.append("ambiguous")
+                    continue
+            else:
+                continue
         elif not seen_measure:
-            before.add(t.n)
+            before.setdefault(t.n, t.word)
         kept.append(t)
     return _Group(kept)
 
@@ -372,13 +446,14 @@ def _low(evidence: str) -> QuantityInfo:
     return QuantityInfo(confidence="low", evidence=evidence)
 
 
-def _resolve_amount(values: set[float], count: int) -> float | None:
-    """同じ次元の内容量の値から 1 個あたりの量を決める。食い違っても、大きい方が小さい方×個数なら
-    総量の併記（5kg×2袋 計10kg）とみなして小さい方を 1 個あたりにする（S3）。決められなければ None。"""
+def _resolve_amount(values: dict[float, bool], count: int) -> float | None:
+    """同じ次元の内容量の値（値 → その値と同じ鎖に個数があるか）から 1 個あたりの量を決める。食い違っても、
+    大きい方が小さい方×個数で、個数が小さい方に付いているなら総量の併記（5kg×2袋 計10kg）とみなして
+    小さい方を 1 個あたりにする（S3）。個数が大きい方に付く「5kg 10kg 2袋」は決められない。決められなければ None。"""
     if len(values) == 1:
         return next(iter(values))
     lo = min(values)
-    if count > 1 and all(v == lo or v == round(lo * count, 9) for v in values):
+    if count > 1 and all(v == lo or (v == round(lo * count, 9) and not values[v]) for v in values):
         return lo
     return None
 
@@ -397,9 +472,18 @@ def parse_quantity(text: str, basis: str | None = None) -> QuantityInfo:
     if any(t.kind == "count" and t.word in SERVING_WORDS for t in toks) and any(
             t.kind == "measure" or (t.kind == "count" and t.word not in SERVING_WORDS) for t in toks):
         toks = [t for t in toks if not (t.kind == "count" and t.word in SERVING_WORDS)]
-    groups = _group(s, toks)
+    groups = _group(s, toks, flags)
     evidence = " / ".join(dict.fromkeys(s[g.toks[0].start:g.toks[-1].end].strip() for g in groups))
-    groups = [_drop_restated(g) for g in groups]
+    if flags and groups:                 # 食い違い・倍数の落ち（P0: 失敗の向きは単価不明）
+        return _low(evidence)
+    # 単独の NP は個数の候補として持つが、他の読み方と一致しない限り high にしない（X1）
+    solo = [g for g in groups if g.toks[0].solo_low]
+    agreed = {_total(g) for g in groups if g.factors and not g.toks[0].solo_low}
+    if any(_total(g) not in agreed for g in solo):
+        return _low(evidence)
+    groups = [_drop_restated(g, flags) for g in groups]
+    if flags and groups:
+        return _low(evidence)
 
     # --- 個数 ---
     cgroups = [g for g in groups if g.factors]
@@ -415,8 +499,9 @@ def parse_quantity(text: str, basis: str | None = None) -> QuantityInfo:
                 continue
         keep.append(g)
     # 複合表記（12ロール×4袋）の 1 袋あたりと同じ単独の記述（12ロール入り）は矛盾とみなさない
-    inner = {h.factors[0].n for h in keep if len(h.factors) > 1}
-    keep = [g for g in keep if not (len(g.factors) == 1 and g.factors[0].n in inner
+    inner = {(h.factors[0].word, h.factors[0].n) for h in keep if len(h.factors) > 1}
+    keep = [g for g in keep if not (len(g.factors) == 1
+                                     and (g.factors[0].word, g.factors[0].n) in inner
                                      and any(len(h.factors) > 1 for h in keep))]
     totals = {_total(g) for g in keep}
     if len(totals) > 1 or any(t <= 0 or t > MAX_PLAUSIBLE_COUNT for t in totals):
@@ -424,22 +509,26 @@ def parse_quantity(text: str, basis: str | None = None) -> QuantityInfo:
     total = next(iter(totals)) if keep else 1
 
     # --- 内容量（同じ次元の × でつながる寸法は大きい方。別々に書かれた値が食い違えば矛盾）---
-    per_group: list[tuple[str, float, int]] = []
+    per_group: list[tuple[str, float, int, bool]] = []
     for g in groups:
         by_dim: dict[str, float] = {}
         for m in g.measures:
             by_dim[m.dim] = max(by_dim.get(m.dim, 0.0), m.n)
         first = {d: next(m.start for m in g.measures if m.dim == d) for d in by_dim}
-        per_group += [(d, a, first[d]) for d, a in by_dim.items()]
+        per_group += [(d, a, first[d], bool(g.factors)) for d, a in by_dim.items()]
     amounts: dict[str, float] = {}
     dim = amount = None
     if per_group:
         order: list[str] = []
-        for d, _, _ in sorted(per_group, key=lambda x: x[2]):
+        for d, _, _, _ in sorted(per_group, key=lambda x: x[2]):
             if d not in order:
                 order.append(d)
         for d in order:
-            resolved = _resolve_amount({round(a, 9) for dd, a, _ in per_group if dd == d}, total)
+            vals: dict[float, bool] = {}
+            for dd, a, _, has in per_group:
+                if dd == d:
+                    vals[round(a, 9)] = vals.get(round(a, 9), False) or has
+            resolved = _resolve_amount(vals, total)
             if resolved is not None:
                 amounts[d] = resolved
         want = None

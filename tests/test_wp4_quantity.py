@@ -75,7 +75,7 @@ def test_s3_other_mismatches_stay_low(text):
 # --- S4 数え語 ------------------------------------------------------------------------
 
 @pytest.mark.parametrize("text,count,unit", [
-    ("トイレットペーパー 12ロール×4P", 48, "ロール"), ("ティッシュ 12P", 12, "パック"), ("ペン 2pcs", 2, "個"),
+    ("トイレットペーパー 12ロール×4P", 48, "ロール"), ("ペン 2pcs", 2, "個"),
     ("ペン 3PC", 3, "個"), ("鉛筆 1ダース", 12, "個"), ("鉛筆 2ダース", 24, "個"), ("ノート 5冊", 5, "冊"),
     ("靴下 3ペア", 3, "ペア"), ("ケーキ 6ヶ", 6, "個"), ("ギフト 5点", 5, "点"),
     ("鉛筆 12本入り 2ダース", 24, "本"),
@@ -83,6 +83,11 @@ def test_s3_other_mismatches_stay_low(text):
 def test_s4_new_counters(text, count, unit):
     q = parse_quantity(text)
     assert (q.confidence, q.count_total, q.count_unit) == ("high", count, unit)
+
+
+def test_s4_standalone_np_is_low_by_x1_correction():
+    """WP5 X1 訂正: ×・入数の直後でない単独の NP は 60P（フレームレート等）と区別できず low。"""
+    assert parse_quantity("ティッシュ 12P").confidence == "low"
 
 
 @pytest.mark.parametrize("text", ["洗剤 900g×6ブロック", "石鹸 4ブロック×6個", "石鹸 6ブロック入り×4",
