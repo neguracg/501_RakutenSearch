@@ -7,17 +7,20 @@ from dataclasses import dataclass, field
 
 @dataclass
 class QuantityInfo:
-    unit: str                    # 比較の基準単位（例 "ロール"）
-    per_pack: int | None         # 1袋あたり
-    pack_count: int | None       # 袋数（単品なら 1）
-    total: int | None            # 総数。confidence != "high" なら None
-    ply: str | None              # "single" / "double" / None
-    length_m: float | None       # 1単位あたりの長さ(m)
-    confidence: str              # "high" / "low" / "none"
-    evidence: str                # 根拠にした文字列（無ければ ""）
-    # 倍巻き・長尺の表記（"x2" "x1.5" "multi"=倍率不明の倍巻き "long"=ロング/長尺）。
-    # 長さの基準が通常品と違うので比較グループを分ける。表記が無ければ None。
-    length_label: str | None = None
+    """商品名から読み取った数量。個数 × 1個あたり内容量。商品の意味（種類・仕様）は持たない。"""
+    count_total: int | None = None         # 総個数。confidence != "high" なら None
+    count_unit: str = "個"                 # 数え語（無ければ "個"）
+    content_amount: float | None = None    # 1個あたり内容量（基準単位）。無い/読めない時は None
+    content_dimension: str | None = None   # volume / mass / length / power / charge / energy / None
+    content_unit: str | None = None        # 基準単位名（"ml" "g" "m" "W" "mAh" "Wh"）
+    measure_total: float | None = None     # count_total × content_amount（内容量が無ければ None）
+    confidence: str = "none"               # "high" / "low" / "none"
+    evidence: str = ""                     # 根拠にした文字列（無ければ ""）
+
+    def __post_init__(self) -> None:
+        if (self.measure_total is None and self.count_total is not None
+                and self.content_amount is not None):
+            self.measure_total = round(self.count_total * self.content_amount, 9)
 
 
 @dataclass
@@ -42,6 +45,9 @@ class Offer:
     fetched_at: str | None = None         # ISO8601 JST
     matched_keywords: list[str] = field(default_factory=list)
     quantity: QuantityInfo | None = None
+    # 比較（pricing.compare）が書き込む。表示単位あたりの円（丸める前）と表示用ラベル（"100mlあたり" 等）
+    unit_price: float | None = None
+    unit_price_label: str | None = None
 
 
 @dataclass

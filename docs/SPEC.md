@@ -5,7 +5,7 @@
 
 ## 1. 目的
 
-ChatGPT の通常チャットで「楽天で○○を条件付きで探して」「いつものトイレットペーパー、今どこが安い？」と頼むと、
+ChatGPT の通常チャットで「楽天で○○を条件付きで探して」（○○はどんな商品でもよい。例: 洗濯洗剤の詰め替え、単3電池、ソーラーパネル、ミネラルウォーター、トイレットペーパー）と頼むと、
 裏で自作ツールが EC サイトの公式 API から商品を集め、比較し、購入候補と商品固有 URL を返す。
 最終形は 楽天・Yahoo!ショッピング・Amazon・ヨドバシ の横断比較。購入操作はしない。
 
@@ -33,7 +33,7 @@ orchestrator.py               … 複数キーワード・ページング・重�
         ↓
 adapters/<mall>.py            … モール固有処理（Phase 1 は rakuten のみ）
         ↓
-models.py（Product / Offer） → quantity.py（数量正規化） → pricing.py（単価・最安判定）
+models.py（Product / Offer） → quantity.py（数量の読み取り・単位換算） → pricing.py（語の絞り込み・単価・最安判定）
 ```
 
 モール固有の知識は adapter の中だけに置く。Phase 2 以降は adapter を足すだけで済む形にする。
@@ -46,7 +46,7 @@ Offer: mall, shop_name, shop_code, mall_item_code, item_name, price（税込・�
 shipping_included（true / false / null）, shipping_fee（円 / null。楽天の検索 API では常に null）,
 shipping_status（included / separate / unknown）, availability（true / false / null）,
 points_rate, review_average, review_count, coupon（null。Phase 1 は取得しない）,
-item_url（商品固有 URL）, fetched_at（ISO8601・JST）, quantity（後述）
+item_url（商品固有 URL）, fetched_at（ISO8601・JST）, quantity（§7）, unit_price・unit_price_label（§8。比較が書き込む）
 
 ## 5. 楽天 Adapter
 
@@ -66,39 +66,82 @@ item_url（商品固有 URL）, fetched_at（ISO8601・JST）, quantity（後述
 - 統計: キーワードごとの hit 件数（API の count）・取得件数・エラー、全体の取得件数・重複除去件数・候補件数・取得日時・打ち切り理由。
 - ChatGPT へは整形済みの必要項目だけ返す（生レスポンスを渡さない）。
 
-## 7. 数量正規化（quantity.py）
+## 7. 数量の読み取り（quantity.py）
 
-商品名・説明から、比較の基準単位（例: ロール）あたりの数量を抽出する。
+商品名から **個数** と **1個あたりの内容量** を読み取る。**道具は商品の意味を持たない**: 持つのは「数量の読み取り（個数×内容量）と単位換算」と「語による絞り込み」だけで、濃縮/通常・層数・色・型番などの仕様の違いは判定しない（商品の意味の判断は呼び出し側の AI と利用者）。カテゴリ固有の知識（シングル/ダブル・倍巻き・ロール既定など）は持たず、プロファイルとしても残さない。
 
-- 例: `12ロール×4袋` → 総 48 ロール、`12ロール×3パック` → 36、`12R×6` → 72。
-- 付随仕様: シングル / ダブル、1 ロールの長さ（m）、倍巻き・長尺表記（length_label: `x2` `x1.5` `multi`=倍率不明 `long`=ロング/長尺。「ポイント10倍」等の販促表記は倍巻きとしない）。倍巻き・長尺の実長は確定させず length_m は null。
-- 結果には confidence（high / low / none）と根拠文字列を持たせる。矛盾する表記が複数ある・読み取れない場合は総数を null にする。
-- 単価計算に使うのは confidence=high のみ。
+- 個数: 「N<数え語>×M<数え語>」「N<数え語>入り×M」「N<数え語>」等。数え語は表（データ）で持つ: 個・本・枚・袋・箱・パック・缶・ロール・セット・組・足・着・台・錠・包・粒・ケース・玉・束・巻・食・回分 等（`R` は「ロール」の略として個数扱い）。
+  総数 = 1袋あたり × 袋数。数え語が2段（例「12ロール×4パック」）なら掛け算、単独なら単体。数字だけの「×6」は直前の個数に掛ける。
+- 内容量: 数値＋計量単位。**換算表（データ）**で基準単位に直す:
+
+  | 次元 | 基準単位 | 換算 |
+  |---|---|---|
+  | volume | ml | ml/mL=1, L/ℓ/リットル=1000, cc=1 |
+  | mass | g | g=1, kg=1000, mg=0.001 |
+  | length | m | m/メートル=1, cm=0.01, mm=0.001, km=1000 |
+  | power | W | W/ワット=1, kW=1000 |
+  | charge | mAh | mAh=1, Ah=1000 |
+  | energy | Wh | Wh=1, kWh=1000 |
+
+  換算表に足すだけで単位を増やせる形にする（if 分岐で単位ごとに書かない）。
+- 結果（`QuantityInfo`）: `count_total`（総個数）・`count_unit`（数え語。無ければ "個"）・`content_amount`（1個あたり内容量・基準単位）・`content_dimension`（volume/mass/…/None）・`content_unit`（基準単位名）・`measure_total`（count_total × content_amount）・`confidence`（high/low/none）・`evidence`（根拠文字列）。
+- 「ポイント10倍」「最大50%OFF」「送料無料」「1000円ポッキリ」等の販促・価格表記は数量にしない。「24ロール分」「〜相当」「〜あたり」は換算の説明なので数えない。
+- 矛盾する表記（同じ次元で値が違う内容量・総数が食い違う個数表記）が複数あれば confidence=low とし、総数・内容量を null。読めなければ none。単価計算に使うのは high のみ。
+
+### 確定した契約（数量）
+
+- Q5 数え語が無く内容量だけある（例「2L」）→ count_total=1・count_unit="個"・confidence=high。数え語も内容量も無い→ none。
+- Q6 数え語が2段のとき count_unit は内側（1つめ。「12ロール×4パック」なら "ロール"）。
+- Q13 内容量が無ければ measure_total=None。
+- Q14 confidence=low のとき content_dimension・content_unit も None（総数・内容量・measure_total も None）。
+- Q15 同じ次元の値が「×」でつながる寸法表記（例「30cm×50m」「幅45cm×長さ100m」）は矛盾ではなく寸法とみなし、**大きい方**を内容量にする（ラップ・テープ・ホース等の長さ）。数え語の付かない裸の数（「34×85cm」の34）は個数にしない。
+- Q16 入力は NFKC で正規化（全角数字・全角英字）。乗算記号は ×・x・X・*。
+- Q17 換算表は quantity.py のモジュール定数 `UNITS: dict[str, tuple[str, float]]`（別名 → (次元, 基準単位への係数)）、表示単位は `DISPLAY: dict[str, tuple[float, str]]`（次元 → (表示の倍率, ラベル)）、数え語は `COUNTERS`。ここに1行足すだけで単位が増える。
+
+実装上の取り決め（契約の範囲内の解釈）:
+- 内容量が複数の次元で書かれている時（例「10000mAh 22.5W」）は最初に書かれた次元を内容量とし、同じ次元の値が食い違う時だけ矛盾（low）とする。
+- 「1ロール30m」「1箱24本入り」の先頭の `1<数え語>` は1個あたりの説明であり、他に総数があれば個数に数えない。「12ロール入り」の単独記述が複合表記（12ロール×4袋）の1袋あたりと同じなら矛盾としない。
+- 総数が 0 以下または 100,000 超は low とする（桁違いの誤読を単価に使わない）。
+- 数え語の直前が英字・ハイフン（型番 `SH-12M`）の数字は数量にしない。`2Lサイズ` は容量にしない。
 
 ## 8. 価格比較（pricing.py）
 
-区別して出す 4 種類:
+- **比較の基準（basis）**: 呼び出し側が `basis` を指定できる（"個" または 換算表の基準単位 "ml"/"g"/"m"/"W"/"mAh"/"Wh"、または L・kg 等の別名＝基準単位に正規化）。
+  未指定なら自動: 候補の過半（high のもの）が同じ内容量の次元を持てばその次元の基準単位、そうでなければ "個"。
+- 単位価格 = 価格 ÷（basis が "個" なら count_total、内容量の次元なら measure_total）。表示用に「100ml あたり」「100g あたり」「1m あたり」「1個あたり」「1W あたり」等の表示単位を付ける（表示換算は表で持つ）。
+- グループは **basis の次元が同じもの** だけ。basis の量が読めない候補は「単価不明」グループに入れ、単位価格の最安判定から外す（件数を caveats）。サイズ違い・入り数違いはグループを分けない（単価で比べるため）。
+- 語の絞り込み: `include_terms`（全部を商品名に含むものだけ残す）・`exclude_terms`（どれかを含むものは外す。既存の ng_keyword とは別に商品名で判定）。外した件数を notes に出す。
+- 区別して出す4種類は維持: 商品単価最安／単位価格最安／支払総額最安（送料不明なら断定しない）／必要数量を満たす最安（`desired_quantity` は basis の単位で解釈）。
+- **caveats に常に1行**:「仕様の違い（濃縮・層数・型番・色など）は判定していません。商品名で確認してください。」
+- 単価は丸める前の値で比較し、表示は小数2桁。
 
-1. 商品単価が最安（price）
-2. 単位あたり価格が最安（price ÷ 総数。1 ロール単価、長さが取れれば 1m 単価）
-3. 支払総額が最安（price + 送料。送料不明なら算出しない）
-4. 必要数量を満たす最安（定番品マスタの希望数量以上を最少額で満たす候補）
+### 確定した契約（価格比較）
 
-規則:
-- 送料が不明（shipping_status=unknown または separate で実額 null）の候補がある時、「総額最安」と断定しない。結果に caveats として理由を書く。
-- シングル / ダブル・長さ・型番が違う商品は同じ比較グループに入れない（誤統合しない）。グループ鍵は ply・length_m・unit に加え、倍巻き・長尺の length_label（表記が無ければ付けない）。長さ不明の通常品と倍巻き・長尺品、倍率の違う倍巻き同士は別グループ。
-- 全体の「単位価格が最安」は、通常表記の候補があるなら倍巻き・長尺品を判定から外し、外した件数を caveats に書く（倍巻きだけの時は倍巻きどうしで順位付けする）。
-- 単価は円・小数 2 桁で丸める（表示用）。比較は丸める前の値で行う。
+- Q0 `pricing.compare` は `Offer.quantity` が入っていればそれを使い、無ければ `parse_quantity(item_name)` で読む。
+- Q1 結果は dataclass `Comparison`: `basis`（正規化後の基準単位 "ml"/"g"/"m"/"W"/"mAh"/"Wh"/"個"）・`basis_label`（表示単位。例 "100mlあたり"）・`groups: list[ComparisonGroup]`（各 `basis`・`dimension`・`offers`。単位価格の安い順）・`unknown_offers: list[Offer]`（basis の量が読めない候補）・`cheapest_price`・`cheapest_unit_price`・`cheapest_total`・`cheapest_for_quantity`（各 Offer または None）・`caveats: list[str]`・`notes: list[str]`。service はこれを同じキー名の dict にする。
+- Q2 最安スロット名は上の4つ（`cheapest_price` / `cheapest_unit_price` / `cheapest_total` / `cheapest_for_quantity`）。
+- Q3 `Offer.unit_price` は**表示単位あたり**の値（例: 100mlあたりの円）。`Offer.unit_price_label` は空白なしの "100mlあたり"・"100gあたり"・"1mあたり"・"1Wあたり"・"1mAhあたり"・"1Whあたり"・"1個あたり"。比較は丸める前の値。
+- Q4 basis「個」のラベルは常に "1個あたり"。
+- Q7 自動判定の「過半」は confidence=high の候補を分母にし、**半数を超える**時だけ（ちょうど半数は「個」）。
+- Q8 単価不明は `unknown_offers` に入れ、どのグループにも入れず `unit_price=None`。件数を caveats に「単価を出せない候補: N件」。
+- Q9 「個」グループの dimension は "count"。
+- Q10 `desired_quantity` は basis の単位（L・kg 等の別名を basis に指定した時も基準単位 ml・g で解釈）。1商品で basis の量が desired 以上のもののうち、価格（price）が最小のもの。複数買いは考えない。
+- Q11 送料不明の候補がある時は `cheapest_total=None` とし、caveats に「送料」を含む理由を書く。
+- Q12 notes の書式は「含む語で除外: N件」「除く語で除外: N件」（0件なら出さない）。
+
+実装上の取り決め: 語の絞り込みは NFKC＋小文字で比べる。basis が表に無い値なら `ValueError`（service・公開面では invalid_request）。価格が不明な候補は順位付けから外し件数を caveats に書く。比較は `Offer.unit_price` / `unit_price_label` を書き込む（単価を出せない候補は None）。
 
 ## 9. 定番品マスタ（regulars.py）
 
-- 置き場: `data/regulars.json`（git 管理外。個人の購入リストのため）。見本は `examples/regulars.sample.json`。
-- 項目: id, name, maker, model_number, jan, required_spec（例: {"ply": "double", "length_m": 30}）, unit（例: ロール）, desired_quantity, keywords, known_urls, notes。
+- 置き場: `data/regulars.json`（git 管理外。個人の購入リストのため）。見本は `examples/regulars.sample.json`（洗剤・電池・水の3カテゴリ）。
+- 項目: id, name, maker, model_number, jan, include_terms（商品名に全て含む語）, exclude_terms（含んだら外す語）, basis（"個" または 基準単位。省略で自動）, desired_quantity（basis の単位）, keywords, known_urls, notes。`required_spec` と `unit` は廃止。
 - 価格・在庫は保存しない。検索のたびに取り直す。
 
 ## 10. MCP サーバー（mcp_server.py）
 
 - stdio の MCP サーバー。ツール: `search_products` / `compare_offers` / `find_regular_item`。
+- `compare_offers(keywords, include_terms=None, exclude_terms=None, desired_quantity=None, basis=None, ng_keyword, min_price, max_price, sort, pages)`。`required_spec` と `unit="ロール"` 既定は廃止（§8）。結果の各候補に `quantity`（§7 の項目）と `unit_price`・`unit_price_label`、`comparison` に §8 Q1 のキー（`basis` `basis_label` `groups` `unknown_offers` `cheapest_*` `caveats` `notes`）。
+- INSTRUCTIONS・ツール説明は特定カテゴリを前提にしない。「include_terms に仕様（例: 『詰め替え』『ダブル』『単3』）を入れる」「仕様差の判定は AI 側の責任」を明記し、例は3カテゴリ以上。
 - 環境変数 `SHOPPING_MOCK=1` でフィクスチャを返す（API を呼ばない）。
 - 公開リモートMCP: `{BASE}/mcp`（Streamable HTTP・stateless・JSON 応答・認証なし）。ツールは `search_products` と `compare_offers` の 2 つだけ（`find_regular_item` は出さない）。流量保護（直列化・キャッシュ・IP別回数制限）は Web と共通（guard.py）。pages は 1 に固定。
 - ChatGPT（Plus）からの実接続は未検証（登録手順は README）。
@@ -127,10 +170,10 @@ item_url（商品固有 URL）, fetched_at（ISO8601・JST）, quantity（後述
 |---|---|
 | AC1 | 複数キーワードから候補を取得できる |
 | AC2 | 同じ itemCode が重複しない（matched_keywords に両方残る） |
-| AC3 | 同一商品の入り数違いを同じグループで認識する |
-| AC4 | 12ロール×3/×4/×6 を 36/48/72 と算出する |
-| AC5 | 1 ロール単価で正しく順位付けする |
-| AC6 | シングル/ダブル・長さ違いを誤統合しない |
+| AC3 | 入り数・サイズ違いを同じグループに入れ、同じ基準単位の単価で比べる（グループは basis の次元が同じものだけ） |
+| AC4 | 個数×内容量を換算表で読む（例: 洗剤 900g×6 → 6個・5400g、水 2L×9本 → 9本・18000ml、12ロール×4パック → 48ロール、単3電池 40本 → 40本） |
+| AC5 | basis（個・ml・g・m・W…）あたりの単価で正しく順位付けする（表示は 100mlあたり 等・小数2桁、比較は丸める前） |
+| AC6 | 基準の量が読めない候補を最安判定に混ぜない（単価不明として件数を caveats）。仕様の違い（濃縮・層数・型番・色など）は判定せず、その旨を caveats に常に1行出す。include_terms / exclude_terms で絞れる |
 | AC7 | 送料不明時は総額最安と断定しない |
 | AC8 | 商品固有 URL が欠落しない（形式不一致は needs_review で残る） |
 | AC9 | 403 / 429 / timeout で安全に止まり、種別が分かる |
