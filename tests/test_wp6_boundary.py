@@ -13,18 +13,15 @@ def _cm(title):
 
 # --- P5: 数え語の直後に文字が続く数は個数にしない（購入系・付属系・仕様の数）---------------------
 
-@pytest.mark.parametrize("title,expected", [
-    ("洗剤 詰め替え 900g 2点お買い上げでポイント5倍", ("high", 1, 900.0)),
-    ("シャンプー 詰め替え 350ml 2点ご購入で送料無料", ("high", 1, 350.0)),
-    ("ボディソープ 500ml 2本同時購入でポイント10倍", ("high", 1, 500.0)),
-    ("シャンプー 400ml 2点目半額クーポン対象", ("high", 1, 400.0)),
-    ("モバイルバッテリー 20000mAh 22.5W 2台同時充電 PSE認証", ("high", 1, 20000.0)),
-    ("電源タップ 延長コード 3m 3個口 雷ガード", ("high", 1, 3.0)),
-    ("掃除機 150W 替えフィルター2個付属", ("high", 1, 150.0)),
-    ("お試しサンプル3包プレゼント 洗顔料 100g", ("high", 1, 100.0)),
+@pytest.mark.parametrize("title", [
+    "洗剤 詰め替え 900g 2点お買い上げでポイント5倍", "シャンプー 詰め替え 350ml 2点ご購入で送料無料",
+    "ボディソープ 500ml 2本同時購入でポイント10倍", "シャンプー 400ml 2点目半額クーポン対象",
+    "モバイルバッテリー 20000mAh 22.5W 2台同時充電 PSE認証", "電源タップ 延長コード 3m 3個口 雷ガード",
+    "掃除機 150W 替えフィルター2個付属", "お試しサンプル3包プレゼント 洗顔料 100g",
 ])
-def test_p5_a_number_followed_by_a_letter_is_not_a_count(title, expected):
-    assert _cm(title) == expected
+def test_p5_a_number_followed_by_a_letter_is_not_a_count(title):
+    # 捨てた数（2・3）が採用した個数（1）と食い違うので、個数 2 や 3 の high にはしない（WP6-4: low）
+    assert parse_quantity(title).confidence == "low"
 
 
 @pytest.mark.parametrize("title", [
@@ -59,7 +56,8 @@ def test_p5_whitelisted_boundaries_still_count(title, expected):
 
 @pytest.mark.parametrize("title", ["洗剤 500ml 5コーヒー", "洗剤 500ml 3ケーブル", "洗剤 500ml 3ケーキ"])
 def test_p5_a_long_vowel_after_ko_or_ke_is_not_a_count(title):
-    assert _cm(title) == ("high", 1, 500.0)
+    q = parse_quantity(title)
+    assert q.confidence == "low" and q.count_total is None      # 5・3 個とは読まない（捨てた数と食い違うので low）
 
 
 @pytest.mark.parametrize("title", ["洗剤 500ml 6コ入り", "洗剤 500ml 6ケ入り", "洗剤 500ml 6コ セット"])
@@ -88,6 +86,25 @@ def test_p5_spaced_point_word_after_p_is_low_not_a_wrong_count():
 @pytest.mark.parametrize("title", ["サプリ 90粒 12ヶ月保証", "洗剤 900g×6 3点以上でポイント5倍", "洗剤 900g×6 2点購入"])
 def test_p5_replaces_the_old_month_and_ten_lists(title):
     assert parse_quantity(title).count_total in (6, 90)
+
+
+# --- WP6-4: P5 で捨てた数が採用した総数と食い違う時は low（P0）------------------------------
+
+@pytest.mark.parametrize("title", [
+    "洗剤 500ml 12個送料無料", "洗剤 500ml 6本まとめ買い", "洗剤 500ml 6本ダブル", "水 500ml×24缶お得",
+])
+def test_wp6_4_a_dropped_count_that_disagrees_with_the_adopted_total_is_low(title):
+    assert parse_quantity(title).confidence == "low"
+
+
+def test_wp6_4_a_dropped_count_equal_to_the_adopted_total_stays_high():
+    assert _cm("水 500ml 12本入り 12本お得") == ("high", 12, 6000.0)
+
+
+@pytest.mark.parametrize("title", ["サプリ 90粒 12ヶ月保証", "洗剤 900g×6 3点以上でポイント5倍", "洗剤 900g×6 2点購入",
+                                   "トイレットペーパー 12ロール 10P還元"])
+def test_wp6_4_known_non_count_continuations_do_not_trigger_the_rule(title):
+    assert parse_quantity(title).confidence == "high"
 
 
 # --- P6: 連結位置で捨てる時は low --------------------------------------------------------

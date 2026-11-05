@@ -231,6 +231,9 @@ _IRI_AFTER = re.compile(r"\s*入")
 # P5: 数え語の直後に文字（かな・漢字・英字・長音）が続く時、個数にしてよいのは次の語の時だけ。それ以外
 # （お・ご・同・目・付・プ・指・刃・口・所・骨・タ・長音…）は個数にしない。語ごとの除外リストは持たない
 _COUNTER_BOUNDARY_WORDS = re.compile(r"(?:x|入|セット|パック|組|ケース|箱|袋|梱|set|pack)")
+# P5 で捨てた数が総数と食い違うと low にする規則（P5 の末尾）の対象外: 期間・販促・還元で、個数の候補ではないと
+# 分かっているもの（12ヶ月保証・3点以上・2点購入・10P還元・5Pアップ）。捨てる判定そのものには使わない
+_KNOWN_NOT_COUNT = re.compile(r"(?:月|購入|以上|まで|で|還元|倍|up|アップ|ポイント|増量)")
 _BARE_RE = re.compile(r"(?:[×*]|(?<![a-z])x)\s*(\d+)(?![\d.]|[a-z])")
 # 数字の直後に続く語（表にあるかどうかは別途判定する）
 _WORD_AFTER_NUM = re.compile(r"(?<![\d.,])(\d{1,9})([^\W\d_]+)")
@@ -265,8 +268,9 @@ def _is_link_position(s: str, start: int, end: int) -> bool:
     return bool(_UNK_BEFORE.search(s[:start]) or _UNK_AFTER.match(s, end))
 
 
-def _tokens(s: str, flags: list[str]) -> list[_Tok]:
-    """flags に "oversize"（桁が多すぎる数）・"dropped_link"（連結位置の数え語を個数に採れなかった。P6）を積む。"""
+def _tokens(s: str, flags: list[str], dropped: list[float]) -> list[_Tok]:
+    """flags に "oversize"（桁が多すぎる数）・"dropped_link"（連結位置の数え語を個数に採れなかった。P6）を積む。
+    dropped には P5 の境界で個数に採らなかった「数字＋数え語」の数を積む（採用した総数との食い違いを parse_quantity が見る）。"""
     units, counters, mults = _unit_table(), _counter_table(), _multiplier_table()
     rx = _token_re(tuple(units), tuple(counters))
     solo_low = {_norm(w) for w in SOLO_LOW_COUNTERS}
@@ -299,6 +303,8 @@ def _tokens(s: str, flags: list[str]) -> list[_Tok]:
             word = counters[key]
             # 個数として採らない理由（P5 境界・小数・単独 P の上限）。連結位置なら黙って捨てず low（P6）
             if not _counter_boundary_ok(s, m.end()) or value != int(value):
+                if value == int(value) and not _KNOWN_NOT_COUNT.match(s, m.end()):
+                    dropped.append(value)
                 if link:
                     flags.append("dropped_link")
                 continue
@@ -482,7 +488,8 @@ def parse_quantity(text: str, basis: str | None = None) -> QuantityInfo:
     content_* に使う（S5）。省略時は最初に書かれた次元。"""
     s = _normalize(text)
     flags: list[str] = []
-    toks = _tokens(s, flags)
+    dropped: list[float] = []
+    toks = _tokens(s, flags, dropped)
     if flags or _unknown_counter(s, toks):
         return _low(s.strip()[:80])
     if not toks:
@@ -526,6 +533,10 @@ def parse_quantity(text: str, basis: str | None = None) -> QuantityInfo:
     if len(totals) > 1 or any(t <= 0 or t > MAX_PLAUSIBLE_COUNT for t in totals):
         return _low(evidence)
     total = next(iter(totals)) if keep else 1
+    # P5 で個数に採らなかった「数字＋数え語」が採用した総数と食い違う時は、捨てた数が本当の個数かもしれない
+    # （洗剤 500ml 12個送料無料）ので low。同じ数なら言い直しなので high のまま
+    if any(d != total for d in dropped):
+        return _low(evidence)
 
     # --- 内容量（同じ次元の × でつながる寸法は大きい方。別々に書かれた値が食い違えば矛盾）---
     per_group: list[tuple[str, float, int, bool]] = []
