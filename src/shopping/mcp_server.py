@@ -44,7 +44,7 @@ def build_server(*, public: bool = False, gate: Gate | None = None) -> MCPServer
         raise ValueError("public server needs a Gate")
     server = MCPServer("shopping-research", instructions=INSTRUCTIONS)
 
-    def invoke(fn, *args, check: dict, pages: int = 1, **kw) -> dict[str, Any]:
+    def invoke(fn, *args, check: dict, pages: int | None = None, **kw) -> dict[str, Any]:
         """check は公開面の入力検査に渡す項目（guard.Gate.admit → inputs.validate）。"""
         if not public:
             return fn(*args, pages=pages, adapter=service.make_adapter(local_tool=True), **kw)
@@ -74,10 +74,12 @@ def build_server(*, public: bool = False, gate: Gate | None = None) -> MCPServer
             "sort は standard / +itemPrice（安い順）/ -itemPrice（高い順）/ -reviewCount など。"
             "include_terms（商品名に全部含む語）・exclude_terms（含んだら外す語）で商品名による絞り込みもできる"
             "（compare_offers と同じ判定。数字で始まる/終わる語は別の数の途中には一致しない: 2L は 12L に一致しない）。"
-            "pages は語ごとに取るページ数（1〜3、1ページ30件。省略は1）。多く取りたい時は pages を上げる"
-            "（検索語の数×ページ数は9まで）。語ごとの取得状況は stats.per_keyword"
+            "pages を省略するとヒットした全件を取得する（楽天の上限: 1語あたり100ページ=3000件まで）。"
+            "pages は語ごとに取るページ数（1〜100、1ページ30件）で、少なく済ませたい時だけ指定する。"
+            "語ごとの取得状況は stats.per_keyword"
             "（api_count=楽天のヒット数、received=取得件数、pages_fetched=取得ページ数、"
-            "truncated=true は要求したページを取り切ってもヒットがまだ残っている）。"
+            "truncated=true はヒットが残っているのに楽天の100ページ上限または指定したpagesで止めた）。"
+            "stats.elapsed_sec は取得にかかった秒。全件取得は件数が多いと数分かかることがある。"
             "max_results は返す件数の上限で、省略すると取得した全件を返す。"
             "各候補に商品固有URL(url)、価格、送料区分(shipping_status: included=送料込み/"
             "separate=送料別/unknown)、数量の読み取り結果(quantity: count_total=総個数、content_amount=1個あたり内容量、"
@@ -86,7 +88,7 @@ def build_server(*, public: bool = False, gate: Gate | None = None) -> MCPServer
     )
     def search_products(keywords: list[str], ng_keyword: str | None = None,
                         min_price: int | None = None, max_price: int | None = None,
-                        sort: str = "standard", pages: int = 1,
+                        sort: str = "standard", pages: int | None = None,
                         max_results: int | None = None, include_terms: list[str] | None = None,
                         exclude_terms: list[str] | None = None) -> dict[str, Any]:
         return invoke(service.search_products, keywords, ng_keyword=ng_keyword, min_price=min_price,
@@ -117,13 +119,14 @@ def build_server(*, public: bool = False, gate: Gate | None = None) -> MCPServer
             "cheapest_price / cheapest_unit_price / cheapest_total / cheapest_for_quantity・caveats・notes。"
             "cheapest_* が null の理由は必ず caveats に書いてあるので、利用者へそのまま伝えること。"
             "keywords・ng_keyword・min_price/max_price・sort・pages は search_products と同じ"
-            "（pages は 1〜3、1ページ30件、検索語の数×ページ数は9まで）。"),
+            "（pages 省略＝ヒットした全件を取得。楽天の上限は1語あたり100ページ=3000件。1〜100で枚数も指定できる）。"
+            "groups・unknown_offers は件数で切らず全件返す。"),
     )
     def compare_offers(keywords: list[str], include_terms: list[str] | None = None,
                        exclude_terms: list[str] | None = None, desired_quantity: float | None = None,
                        basis: str | None = None, ng_keyword: str | None = None,
                        min_price: int | None = None, max_price: int | None = None,
-                       sort: str = "standard", pages: int = 1) -> dict[str, Any]:
+                       sort: str = "standard", pages: int | None = None) -> dict[str, Any]:
         return invoke(service.compare_offers, keywords, include_terms, exclude_terms,
                       desired_quantity, basis, ng_keyword=ng_keyword, min_price=min_price,
                       max_price=max_price, sort=sort, pages=pages,
@@ -147,7 +150,7 @@ def build_server(*, public: bool = False, gate: Gate | None = None) -> MCPServer
             "価格・在庫は保存されておらず、呼ぶたびに取り直す。"
             "id が不明な時は、マスタに無い旨のエラー(regulars_not_found)が返る。"),
     )
-    def find_regular_item(regular_id: str, pages: int = 1) -> dict[str, Any]:
+    def find_regular_item(regular_id: str, pages: int | None = None) -> dict[str, Any]:
         return service.find_regular_item(regular_id, pages=pages,
                                          adapter=service.make_adapter(local_tool=True))
 

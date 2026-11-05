@@ -21,8 +21,8 @@ from .adapters.base import AdapterError, MarketplaceAdapter
 from . import inputs
 from .adapters.mock import MockAdapter
 
-MIN_INTERVAL_SEC = 1.0
-CACHE_TTL_SEC = 600            # 10 分（楽天のキャッシュ上限 24 時間よりずっと短い）
+MIN_INTERVAL_SEC = 1.0         # 出典: 楽天ウェブサービスの利用上限（1 アプリ 1 秒 1 リクエスト）
+CACHE_TTL_SEC = 600            # 10 分（出典: 楽天の規約で価格・在庫のキャッシュは 24 時間以内。それよりずっと短い安全側）
 CACHE_MAX_ENTRIES = 300
 MAX_WAITERS = 6                # これを超えて待たせない（"busy" を返す）
 WAIT_TIMEOUT_SEC = 30.0
@@ -166,7 +166,8 @@ class Gate:
         """公開面（Web と MCP）の入口。先に入力を検査し（不正なら inputs.InvalidInput）、通ったものだけ回数を数える。
         ロック取得・最小間隔のスリープ・API 呼び出しより前に置くので、弾いた入力は API 枠を消費しない。"""
         inputs.validate(**fields)
-        self.check(ip, fields.get("pages", 1))
+        pages = fields.get("pages")
+        self.check(ip, 1 if pages is None else pages)    # 省略（全件）は取得前に枚数が分からないので 1 回分。楽天側は直列化で守られる
 
 
 def _env_int(name: str, default: int) -> int:

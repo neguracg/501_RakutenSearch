@@ -33,7 +33,7 @@ class MockAdapter(MarketplaceAdapter):
                availability: int = 1) -> tuple[list[Offer], int]:
         if not isinstance(keyword, str) or not keyword.strip():
             raise AdapterError("invalid_request")
-        if not (1 <= hits <= 30) or page < 1:
+        if not (1 <= hits <= 30) or page < 1:    # 本物（rakuten.py）と同じ検査。hits 1〜30 は楽天の仕様
             raise AdapterError("invalid_request")
         self.calls += 1
         try:

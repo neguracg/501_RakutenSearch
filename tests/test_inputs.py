@@ -84,30 +84,23 @@ def test_admit_and_check_share_one_budget():
 
 
 # --- pages（公開 MCP で pages を効かせる。2026-11-06） ---
-@pytest.mark.parametrize("pages", [1, 2, 3])
-def test_pages_1_to_3_pass(pages):
+# pages 省略（None）＝全件。整数は 1〜100（楽天 IchibaItem Search の page 上限）
+@pytest.mark.parametrize("pages", [None, 1, 2, 3, 4, 50, 100])
+def test_pages_none_or_1_to_100_pass(pages):
     validate(**OK, pages=pages)
+    validate(**OK)                                      # 省略（既定）も通る
 
 
-@pytest.mark.parametrize("pages", [0, 4, -1, 1.5, "2", None, True, False])
+@pytest.mark.parametrize("pages", [0, 101, -1, 1.5, "2", True, False])
 def test_pages_out_of_range_or_non_int_is_invalid(pages):
     with pytest.raises(InvalidInput, match="pages"):
         validate(**OK, pages=pages)
 
 
-@pytest.mark.parametrize("n,pages,ok", [(3, 3, True), (4, 2, True), (5, 1, True), (4, 3, False),
-                                        (5, 2, False), (5, 3, False), (2, 3, True)])
-def test_keywords_times_pages_is_at_most_9(n, pages, ok):
-    kw = dict(keywords=[f"k{i}" for i in range(n)], pages=pages)
-    if ok:
-        validate(**kw)
-    else:
-        with pytest.raises(InvalidInput, match="9"):
-            validate(**kw)
-
-
-def test_blank_keywords_do_not_count_toward_the_9():
-    validate(keywords=["a", "b", "c", " ", ""], pages=3)
+@pytest.mark.parametrize("n,pages", [(5, 100), (5, None), (4, 3), (5, 2)])
+def test_no_keywords_times_pages_limit_any_more(n, pages):
+    # 以前は 検索語の数×ページ数 ≤ 9 で弾いていた（出典の無い上限だったので撤去）
+    validate(keywords=[f"k{i}" for i in range(n)], pages=pages)
 
 
 def test_rate_limiter_weight_counts_pages_and_rejection_consumes_nothing():
@@ -134,7 +127,8 @@ def test_rate_limiter_weight_larger_than_limit_is_clamped_so_one_call_can_pass()
 
 def test_admit_charges_pages_and_default_is_one():
     gate = Gate(FakeAdapter({}), RateLimiter(limit=4, window=60, clock=lambda: 0.0))
-    gate.admit("ip", **OK)                             # pages 省略（Web）= 1 回分
-    gate.admit("ip", **OK, pages=3)                    # 計 4
+    gate.admit("ip", **OK)                             # pages 省略（全件・Web）= 1 回分（取得前は枚数が分からない）
+    gate.admit("ip", **OK, pages=None)                 # 明示 None も 1 回分（計 2）
+    gate.admit("ip", **OK, pages=2)                    # 計 4
     with pytest.raises(RateLimited):
         gate.admit("ip", **OK)

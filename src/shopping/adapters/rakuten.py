@@ -141,7 +141,7 @@ class RakutenAdapter(MarketplaceAdapter):
             raise AdapterError("invalid_request")
         if ng_keyword is not None and (not isinstance(ng_keyword, str) or not fits_limit(ng_keyword.strip())):
             raise AdapterError("invalid_request")
-        if not (1 <= hits <= 30) or page < 1:
+        if not (1 <= hits <= 30) or page < 1:    # hits 1〜30 は楽天 IchibaItem Search の仕様（出典: 楽天ウェブサービス API 仕様）
             raise AdapterError("invalid_request")
         params: dict = dict(keyword=keyword, hits=hits, page=page, sort=sort,
                             availability=availability)

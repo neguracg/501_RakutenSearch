@@ -31,7 +31,8 @@ def _add_search_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--include", nargs="+", metavar="語", help="商品名に全て含む語（例: 詰め替え 単3）")
     p.add_argument("--exclude", nargs="+", metavar="語", help="商品名に含んだら外す語")
     p.add_argument("--sort", default="standard")
-    p.add_argument("--pages", type=int, default=1, help="語ごとのページ数（最大3）")
+    p.add_argument("--pages", type=int, default=None,
+                   help="語ごとのページ数（1〜100。省略＝ヒットした全件。楽天の上限は 100 ページ=3000 件/語）")
     _add_common(p)
 
 
@@ -47,7 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = ap.add_subparsers(dest="command", required=True)
     s = sub.add_parser("search", help="候補を検索して一覧表示")
     _add_search_args(s)
-    s.add_argument("--max-results", type=int, default=30)
+    s.add_argument("--max-results", type=int, default=None, help="表示件数の上限（省略＝取得した全件）")
     c = sub.add_parser("compare", help="同じ仕様どうしで比較して最安を出す")
     _add_search_args(c)
     c.add_argument("--basis", help="比べる単位: 個 / ml / g / m / W / mAh / Wh（L・kg 等の別名も可）。省略で自動")
@@ -55,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("regular", help="定番品マスタの id で今の最安を調べる")
     r.add_argument("regular_id")
     r.add_argument("--regulars", help="定番品マスタのパス（既定 data/regulars.json）")
-    r.add_argument("--pages", type=int, default=1)
+    r.add_argument("--pages", type=int, default=None, help="語ごとのページ数（省略＝全件）")
     _add_common(r)
     return ap
 

@@ -21,7 +21,6 @@ from .regulars import Regular, RegularsError, get_regular
 
 SOURCE = "楽天市場（楽天ウェブサービス）"
 CAPTION_MAX = 200
-GROUP_OFFERS_MAX = 10
 MOCK_ENV = "SHOPPING_MOCK"
 
 _FRESHNESS_NOTE = "価格・在庫は fetched_at 時点の値。キャッシュは24時間以内に取り直すこと。"
@@ -177,8 +176,8 @@ def _base_notes(offers: list[Offer], stats: SearchStats, mock: bool,
 
 
 def search_products(keywords, *, ng_keyword: str | None = None, min_price: int | None = None,
-                    max_price: int | None = None, sort: str = "standard", pages: int = 1,
-                    hits: int = 30, max_results: int | None = None,
+                    max_price: int | None = None, sort: str = "standard", pages: int | None = None,
+                    hits: int = 30, max_results: int | None = None,      # hits 30 は楽天の上限（1 ページ最大）
                     include_terms=None, exclude_terms=None,
                     adapter: MarketplaceAdapter | None = None, sleep=None,
                     limits: Limits | None = None) -> dict:
@@ -195,7 +194,7 @@ def search_products(keywords, *, ng_keyword: str | None = None, min_price: int |
     offers, stats, mock = r
     _annotate(offers)
     kept, term_notes = filter_by_terms(offers, inc, exc)     # 比較（compare）と同じ絞り込み（S9）
-    shown = kept if max_results is None else kept[:max(0, max_results)]   # None は全件（上限は語数×pages×30）
+    shown = kept if max_results is None else kept[:max(0, max_results)]   # None は全件（切り詰めは利用者が max_results を指定した時だけ）
     notes = _base_notes(kept, stats, mock) + term_notes
     if len(shown) < len(kept):
         notes.append(f"候補 {len(kept)} 件のうち先頭 {len(shown)} 件だけ返した（max_results）。")
@@ -205,16 +204,22 @@ def search_products(keywords, *, ng_keyword: str | None = None, min_price: int |
             "offers": [offer_to_dict(o) for o in shown], "notes": notes}
 
 
-def _comparison_to_dict(c: Comparison, known_urls: list[str] | None = None) -> dict:
+def _comparison_to_dict(c: Comparison, known_urls: list[str] | None = None,
+                        group_offers_max: int | None = None) -> dict:
+    """group_offers_max: groups[].offers と unknown_offers を先頭何件で切るか。None は切らない（MCP・CLI）。
+    Web 画面だけが表示のために指定する（web.WEB_GROUP_OFFERS_MAX）。count / unknown_count は常に全件数。"""
+    def cut(offers):
+        return offers if group_offers_max is None else offers[:group_offers_max]
+
     def one(o: Offer | None):
         return None if o is None else offer_to_dict(o, known_urls)
     return {
         "basis": c.basis,
         "basis_label": c.basis_label,
         "groups": [{"basis": g.basis, "dimension": g.dimension, "count": len(g.offers),
-                    "offers": [offer_to_dict(o, known_urls) for o in g.offers[:GROUP_OFFERS_MAX]]}
+                    "offers": [offer_to_dict(o, known_urls) for o in cut(g.offers)]}
                    for g in c.groups],
-        "unknown_offers": [offer_to_dict(o, known_urls) for o in c.unknown_offers[:GROUP_OFFERS_MAX]],
+        "unknown_offers": [offer_to_dict(o, known_urls) for o in cut(c.unknown_offers)],
         "unknown_count": len(c.unknown_offers),
         "cheapest_price": one(c.cheapest_price),
         "cheapest_unit_price": one(c.cheapest_unit_price),
@@ -236,7 +241,8 @@ def _terms_arg(value, name: str) -> list[str] | None | dict:
 
 
 def _compare_flow(keywords, include_terms, exclude_terms, desired_quantity, basis, *, adapter,
-                  pages, hits, limits, sleep, filters, known_urls=None) -> dict:
+                  pages, hits, limits, sleep, filters, known_urls=None,
+                  group_offers_max: int | None = None) -> dict:
     inc = _terms_arg(include_terms, "include_terms")
     exc = _terms_arg(exclude_terms, "exclude_terms")
     for v in (inc, exc):
@@ -264,19 +270,20 @@ def _compare_flow(keywords, include_terms, exclude_terms, desired_quantity, basi
     return {"ok": True, "source": SOURCE, "mock": mock, "keywords": _validate_keywords(keywords),
             "include_terms": inc, "exclude_terms": exc, "desired_quantity": desired_quantity,
             "basis": comparison.basis, "stats": _stats_to_dict(stats),
-            "comparison": _comparison_to_dict(comparison, known_urls), "notes": notes}
+            "comparison": _comparison_to_dict(comparison, known_urls, group_offers_max),
+            "notes": notes}
 
 
 def compare_offers(keywords, include_terms=None, exclude_terms=None, desired_quantity=None,
                    basis: str | None = None, *, ng_keyword: str | None = None,
                    min_price: int | None = None, max_price: int | None = None,
-                   sort: str = "standard", pages: int = 1, hits: int = 30,
+                   sort: str = "standard", pages: int | None = None, hits: int = 30,
                    adapter: MarketplaceAdapter | None = None, sleep=None,
-                   limits: Limits | None = None) -> dict:
+                   limits: Limits | None = None, group_offers_max: int | None = None) -> dict:
     filters = dict(ng_keyword=ng_keyword, min_price=min_price, max_price=max_price, sort=sort)
     return _compare_flow(keywords, include_terms, exclude_terms, desired_quantity, basis,
                          adapter=adapter, pages=pages, hits=hits, limits=limits, sleep=sleep,
-                         filters=filters)
+                         filters=filters, group_offers_max=group_offers_max)
 
 
 def _regular_info(r: Regular) -> dict:
@@ -295,7 +302,7 @@ _REGULARS_MESSAGES = {
 }
 
 
-def find_regular_item(regular_id: str, *, regulars_path=None, pages: int = 1, hits: int = 30,
+def find_regular_item(regular_id: str, *, regulars_path=None, pages: int | None = None, hits: int = 30,
                       adapter: MarketplaceAdapter | None = None, sleep=None,
                       limits: Limits | None = None) -> dict:
     if not isinstance(regular_id, str) or not regular_id.strip():

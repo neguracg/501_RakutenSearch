@@ -56,6 +56,27 @@ def test_limit_error_returns_1(capsys):
     assert "invalid_request" in capsys.readouterr().err
 
 
+def test_cli_defaults_are_all_hits_no_pages_no_max_results():
+    ap = cli.build_parser()
+    a = ap.parse_args(["search", "x"])
+    assert a.pages is None and a.max_results is None
+    assert ap.parse_args(["compare", "x"]).pages is None
+    assert ap.parse_args(["regular", "r"]).pages is None
+    assert ap.parse_args(["search", "x", "--pages", "2", "--max-results", "5"]).pages == 2
+
+
+def test_cli_search_default_returns_every_hit(capsys):
+    assert cli.run(["search", "洗濯洗剤", "--mock", "--json"]) == 0
+    d = json.loads(capsys.readouterr().out)
+    st = d["stats"]["per_keyword"][0]
+    assert d["returned"] == st["received"] == st["api_count"] and not st["truncated"]
+
+
+def test_cli_pages_101_is_invalid(capsys):
+    assert cli.run(["search", "洗濯洗剤", "--mock", "--pages", "101"]) == 1
+    assert "invalid_request" in capsys.readouterr().err
+
+
 def _no_credentials(monkeypatch):
     # .env を読ませない（実キーを使わない・通信もしない）: 認証情報が空なら adapter は通信前に止まる
     monkeypatch.setattr("shopping.service.load_credentials",

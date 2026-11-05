@@ -103,7 +103,7 @@ def test_too_many_keywords_raises_before_any_call():
 def test_too_many_pages_raises_before_any_call():
     ad = FakeAdapter({})
     with pytest.raises(ValueError):
-        search_many(ad, ["a"], max_pages=4, sleep=lambda s: None)
+        search_many(ad, ["a"], max_pages=101, sleep=lambda s: None)     # 楽天の page 上限は 100
     assert ad.calls == []
 
 
@@ -168,7 +168,7 @@ def test_keyword_stat_pages_fetched_and_truncated():
     s = stats.per_keyword[0]
     assert (s.pages_fetched, s.received, s.api_count, s.truncated) == (3, 90, 500, True)
     # 要求 1 ページで終わるが残りあり: truncated
-    _, _, stats, _ = run({("a", 1): (pg(30, 1), 500)}, ["a"])
+    _, _, stats, _ = run({("a", 1): (pg(30, 1), 500)}, ["a"], max_pages=1)
     assert stats.per_keyword[0].truncated is True and stats.per_keyword[0].pages_fetched == 1
     # ヒットが少なく途中で終わる: truncated でない・取得ページ数は実際の数
     _, _, stats, _ = run({("a", 1): (pg(30, 1), 45), ("a", 2): (pg(15, 2), 45)}, ["a"], max_pages=3)
@@ -181,3 +181,50 @@ def test_keyword_stat_error_is_not_truncated_and_counts_only_fetched_pages():
     _, _, stats, _ = run(pages, ["a"], max_pages=3)
     s = stats.per_keyword[0]
     assert s.error == "timeout" and s.pages_fetched == 1 and s.truncated is False
+
+
+# --- pages 省略（max_pages=None）＝全件（楽天の 100 ページ天井まで） ---
+def _pages_of(total, keyword="a", per_page=30, upto=None):
+    """total 件ヒットする語の表。page ごとに別商品を per_page 件（最終ページは端数）。"""
+    upto = upto or -(-total // per_page)
+    table = {}
+    for p in range(1, upto + 1):
+        n = max(0, min(per_page, total - (p - 1) * per_page))
+        table[(keyword, p)] = ([make_offer(f"{keyword}-{p}-{i}") for i in range(n)], total)
+    return table
+
+
+def test_max_pages_none_fetches_everything_until_hits_run_out():
+    ad, offers, stats, _ = run(_pages_of(144), ["a"], max_pages=None)
+    s = stats.per_keyword[0]
+    assert len(offers) == 144 and [kw["page"] for _, kw in ad.calls] == [1, 2, 3, 4, 5]
+    assert (s.api_count, s.received, s.pages_fetched, s.truncated) == (144, 144, 5, False)
+
+
+def test_max_pages_none_default_is_all():
+    ad, offers, _, _ = run(_pages_of(61), ["a"])                      # 引数省略も全件
+    assert len(offers) == 61 and len(ad.calls) == 3
+
+
+def test_max_pages_none_stops_at_rakuten_ceiling_100_and_is_truncated():
+    ad, offers, stats, _ = run(_pages_of(5000, upto=101), ["a"], max_pages=None)
+    s = stats.per_keyword[0]
+    assert len(ad.calls) == 100 and len(offers) == 3000              # 100 ページ × 30 件
+    assert (s.api_count, s.received, s.pages_fetched, s.truncated) == (5000, 3000, 100, True)
+
+
+def test_max_pages_none_exactly_3000_hits_is_not_truncated():
+    _, _, stats, _ = run(_pages_of(3000), ["a"], max_pages=None)
+    s = stats.per_keyword[0]
+    assert (s.pages_fetched, s.received, s.truncated) == (100, 3000, False)
+
+
+def test_explicit_max_pages_100_is_allowed_and_equals_the_ceiling():
+    ad, _, stats, _ = run(_pages_of(5000, upto=101), ["a"], max_pages=100)
+    assert len(ad.calls) == 100 and stats.per_keyword[0].truncated is True
+
+
+def test_stats_has_elapsed_sec_with_one_decimal():
+    _, _, stats, _ = run(_pages_of(10), ["a"])
+    assert isinstance(stats.elapsed_sec, float) and stats.elapsed_sec >= 0
+    assert round(stats.elapsed_sec, 1) == stats.elapsed_sec

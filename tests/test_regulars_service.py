@@ -164,8 +164,8 @@ def test_search_products_bad_keywords(kw):
 def test_search_products_over_limit_returns_error_not_exception():
     r = service.search_products([f"k{i}" for i in range(6)], adapter=MockAdapter())
     assert r["ok"] is False and r["error"]["kind"] == "invalid_request"
-    r = service.search_products(["a"], pages=4, adapter=MockAdapter())
-    assert r["ok"] is False
+    r = service.search_products(["a"], pages=101, adapter=MockAdapter())     # 楽天の page 上限(100)超え
+    assert r["ok"] is False and r["error"]["kind"] == "invalid_request"
 
 
 @pytest.mark.parametrize("kind", ["http_403", "http_429", "timeout"])
@@ -307,10 +307,55 @@ def test_no_credentials_in_any_output(monkeypatch):
 
 
 def test_search_products_default_max_results_returns_everything_fetched():
-    # 既定（None）は取得した全件（語数×pages×30 が上限）。30 件で黙って切らない
+    # 既定（None）は取得した全件。30 件で黙って切らない
     pages = {("a", p): ([make_offer(f"a{p}-{i}") for i in range(30)], 90) for p in (1, 2, 3)}
     r = service.search_products(["a"], adapter=FakeAdapter(pages), pages=3, sleep=lambda s: None)
     assert r["returned"] == 90 and not any("max_results" in n for n in r["notes"])
     r = service.search_products(["a"], adapter=FakeAdapter(pages), pages=3, max_results=0,
                                 sleep=lambda s: None)
     assert r["returned"] == 0 and any("max_results" in n for n in r["notes"])
+
+
+def _hits_table(total, per_page=30, keyword="a", upto=None):
+    upto = upto or -(-total // per_page)
+    return {(keyword, p): ([make_offer(f"{keyword}{p}-{i}", f"商品 {p}-{i} 100g")
+                            for i in range(max(0, min(per_page, total - (p - 1) * per_page)))], total)
+            for p in range(1, upto + 1)}
+
+
+def test_search_products_pages_omitted_returns_all_144_hits():
+    ad = FakeAdapter(_hits_table(144))
+    r = service.search_products(["a"], adapter=ad, sleep=lambda s: None)
+    st = r["stats"]["per_keyword"][0]
+    assert r["returned"] == 144 and len(ad.calls) == 5
+    assert (st["api_count"], st["received"], st["pages_fetched"], st["truncated"]) == (144, 144, 5, False)
+    assert isinstance(r["stats"]["elapsed_sec"], float)
+
+
+def test_search_products_pages_omitted_stops_at_100_pages_and_says_truncated():
+    ad = FakeAdapter(_hits_table(5000, upto=101))
+    r = service.search_products(["a"], adapter=ad, sleep=lambda s: None)
+    st = r["stats"]["per_keyword"][0]
+    assert len(ad.calls) == 100 and r["returned"] == 3000
+    assert (st["pages_fetched"], st["truncated"]) == (100, True)
+
+
+def test_compare_offers_does_not_cut_groups_by_default_but_group_offers_max_cuts():
+    pages = {("a", 1): ([make_offer(f"x{i}", f"洗剤 {i} 900g", 1000 + i, shipping_status="included")
+                         for i in range(25)], 25)}
+    r = service.compare_offers(["a"], adapter=FakeAdapter(pages), sleep=lambda s: None)
+    g = r["comparison"]["groups"][0]
+    assert g["count"] == 25 and len(g["offers"]) == 25                     # MCP・CLI は切らない
+    r = service.compare_offers(["a"], adapter=FakeAdapter(pages), sleep=lambda s: None,
+                               group_offers_max=10)                          # Web 画面だけ 10 件表示
+    g = r["comparison"]["groups"][0]
+    assert g["count"] == 25 and len(g["offers"]) == 10
+
+
+def test_compare_offers_does_not_cut_unknown_offers_by_default():
+    pages = {("a", 1): ([make_offer(f"u{i}", f"量の分からない商品 {i}") for i in range(25)], 25)}
+    r = service.compare_offers(["a"], adapter=FakeAdapter(pages), sleep=lambda s: None)
+    c = r["comparison"]
+    assert c["unknown_count"] == 25 and len(c["unknown_offers"]) == 25
+    r = service.compare_offers(["a"], adapter=FakeAdapter(pages), sleep=lambda s: None, group_offers_max=10)
+    assert len(r["comparison"]["unknown_offers"]) == 10

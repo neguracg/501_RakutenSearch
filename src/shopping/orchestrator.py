@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from .adapters.base import AdapterError
+from .inputs import MAX_HITS, MAX_PAGES
 from .models import KeywordStat, Offer, SearchStats
 
 JST = timezone(timedelta(hours=9))
@@ -14,36 +15,40 @@ JST = timezone(timedelta(hours=9))
 
 @dataclass(frozen=True)
 class Limits:
-    max_keywords: int = 5
-    max_pages: int = 3
-    min_interval_sec: float = 1.0
+    max_keywords: int = 5          # 検索語の数。楽天由来ではなくこのアプリの既存仕様（SPEC §6・inputs.MAX_KEYWORDS と同じ値）
+    max_pages: int = MAX_PAGES     # 楽天の page 上限 100（出典: 楽天 IchibaItem Search 仕様。inputs.MAX_PAGES）
+    min_interval_sec: float = 1.0  # 出典: 楽天ウェブサービスの 1 秒 1 リクエスト
 
 
-def _validate(keywords, max_pages: int, hits: int, limits: Limits) -> None:
+def _validate(keywords, max_pages: int | None, hits: int, limits: Limits) -> None:
     if not keywords:
         raise ValueError("keywords must not be empty")
     if len(keywords) > limits.max_keywords:
         raise ValueError(f"too many keywords: {len(keywords)} > {limits.max_keywords}")
-    if max_pages < 1:
-        raise ValueError("max_pages must be >= 1")
-    if max_pages > limits.max_pages:
-        raise ValueError(f"too many pages: {max_pages} > {limits.max_pages}")
-    if not (1 <= hits <= 30):
+    if max_pages is not None:
+        if max_pages < 1:
+            raise ValueError("max_pages must be >= 1")
+        if max_pages > limits.max_pages:
+            raise ValueError(f"too many pages: {max_pages} > {limits.max_pages}")
+    if not (1 <= hits <= MAX_HITS):       # 楽天の hits 上限 30（出典: 楽天 IchibaItem Search 仕様）
         raise ValueError("hits must be 1..30")
     if limits.min_interval_sec < 0:
         raise ValueError("min_interval_sec must be >= 0")
 
 
-def search_many(adapter, keywords: list[str], *, max_pages: int = 1, hits: int = 30,
+def search_many(adapter, keywords: list[str], *, max_pages: int | None = None, hits: int = 30,
                 limits: Limits = Limits(), sleep=time.sleep,
                 **filters) -> tuple[list[Offer], SearchStats]:
     """keywords を順に検索し、mall_item_code で重複排除した Offer と統計を返す。
 
+    max_pages=None は全件（ヒットが尽きるか、楽天の上限 limits.max_pages ページに達するまで）。整数はそのページ数まで。
     上限超えは ValueError（黙って切らない・通信前に判定）。
     http_429 は残り全部を打ち切る。他の AdapterError はそのキーワードだけ記録して続行。
     """
     keywords = list(keywords)
     _validate(keywords, max_pages, hits, limits)
+    last_page = limits.max_pages if max_pages is None else max_pages
+    started = time.monotonic()
 
     stats = SearchStats(fetched_at=datetime.now(JST).isoformat())
     unique: dict[tuple[str, str], Offer] = {}
@@ -53,7 +58,7 @@ def search_many(adapter, keywords: list[str], *, max_pages: int = 1, hits: int =
         stat = KeywordStat(keyword=keyword)
         stats.per_keyword.append(stat)
         rate_limited = False
-        for page in range(1, max_pages + 1):
+        for page in range(1, last_page + 1):
             if requested_any:
                 sleep(limits.min_interval_sec)
             requested_any = True
@@ -81,11 +86,12 @@ def search_many(adapter, keywords: list[str], *, max_pages: int = 1, hits: int =
             if not offers or page * hits >= api_count:
                 break
         else:
-            # break せずに要求ページを取り切った。ヒット数がまだ残っているなら打ち切り（上限で切った）
+            # break せずに最終ページ（楽天の 100 ページ天井、または明示 pages）まで来た。ヒットが残っていれば打ち切り
             stat.truncated = stat.api_count is not None and stat.api_count > stat.received
         if rate_limited:
             stats.stopped_reason = "rate_limited"
             break
 
     stats.unique_offers = len(unique)
+    stats.elapsed_sec = round(time.monotonic() - started, 1)    # 取得にかかった秒（上限を置くかの実測用）
     return list(unique.values()), stats

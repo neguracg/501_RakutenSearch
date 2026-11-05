@@ -74,7 +74,7 @@ class KeywordStat:
     received: int = 0
     error: str | None = None
     pages_fetched: int = 0      # 実際に取得できたページ数
-    truncated: bool = False     # 要求したページを取り切ったが、楽天のヒット数(api_count)にはまだ届いていない
+    truncated: bool = False     # ヒットが残っているのに、楽天の 100 ページ天井または明示した pages で止めた
 
 
 @dataclass
@@ -85,3 +85,4 @@ class SearchStats:
     unique_offers: int = 0
     fetched_at: str | None = None
     stopped_reason: str | None = None
+    elapsed_sec: float | None = None    # 取得にかかった秒（小数 1 桁）

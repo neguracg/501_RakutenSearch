@@ -145,6 +145,14 @@ def test_search_fixed_pages_and_hits():
     assert ad.calls and all(kw.get("page") == 1 and kw.get("hits") == 30 for _, kw in ad.calls)
 
 
+def test_web_compare_screen_still_shows_only_10_per_group():
+    pages = {("洗濯洗剤", 1): ([make_offer(f"x{i}", f"洗濯洗剤 {i} 900g", 1000 + i, shipping_status="included")
+                              for i in range(25)], 25)}
+    c, _, _ = make_client("", adapter=fake(pages))
+    html = c.get("/compare?q=洗濯洗剤").text
+    assert "（25件）" in html and "ほか 15 件は省略しています" in html      # 画面の出力は従来どおり 10 件
+
+
 def test_multiple_keywords_split_by_newline_and_comma_max_five():
     ad = fake()
     c, _, _ = make_client("", adapter=ad)

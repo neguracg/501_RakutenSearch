@@ -264,12 +264,33 @@ def test_public_pages_3_fetches_pages_1_2_3_and_returns_all_90_without_max_resul
     assert (st["api_count"], st["received"], st["pages_fetched"], st["truncated"]) == (90, 90, 3, False)
 
 
-def test_public_default_pages_is_1_and_shows_truncated_when_more_hits_remain():
-    app, ad = make_app("", adapter=FakeAdapter(many_pages(pages_n=1, total=500)))
+def test_public_pages_omitted_fetches_all_144_hits_in_5_pages():
+    pg = many_pages(pages_n=5, total=144)
+    pg[("洗濯洗剤", 5)] = (pg[("洗濯洗剤", 5)][0][:24], 144)           # 最終ページは端数 24 件（30×4+24=144）
+    app, ad = make_app("", adapter=FakeAdapter(pg))
     with TestClient(app) as tc:
         d = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"]}))
+    assert [kw["page"] for _, kw in ad.calls] == [1, 2, 3, 4, 5]
+    assert d["returned"] == 144 and len(d["offers"]) == 144
+    st = d["stats"]["per_keyword"][0]
+    assert (st["api_count"], st["received"], st["pages_fetched"], st["truncated"]) == (144, 144, 5, False)
+    assert isinstance(d["stats"]["elapsed_sec"], float)
+
+
+def test_public_pages_omitted_stops_at_rakuten_100_page_ceiling_and_is_truncated():
+    app, ad = make_app("", adapter=FakeAdapter(many_pages(pages_n=101, total=5000)))
+    with TestClient(app) as tc:
+        d = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"]}))
+    assert len(ad.calls) == 100 and d["returned"] == 3000
+    st = d["stats"]["per_keyword"][0]
+    assert (st["api_count"], st["pages_fetched"], st["truncated"]) == (5000, 100, True)
+
+
+def test_public_explicit_pages_1_stops_there_and_shows_truncated_when_more_hits_remain():
+    app, ad = make_app("", adapter=FakeAdapter(many_pages(pages_n=1, total=500)))
+    with TestClient(app) as tc:
+        d = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"], "pages": 1}))
     assert [kw["page"] for _, kw in ad.calls] == [1]
-    assert d["returned"] == 30                                  # max_results 省略でも 1 ページ分はそのまま全部
     st = d["stats"]["per_keyword"][0]
     assert (st["api_count"], st["received"], st["pages_fetched"], st["truncated"]) == (500, 30, 1, True)
 
@@ -291,12 +312,10 @@ def test_public_compare_offers_passes_pages_too():
 
 @pytest.mark.parametrize("tool", ["search_products", "compare_offers"])
 @pytest.mark.parametrize("args", [
-    {"keywords": ["洗濯洗剤"], "pages": 4}, {"keywords": ["洗濯洗剤"], "pages": 0},
+    {"keywords": ["洗濯洗剤"], "pages": 101}, {"keywords": ["洗濯洗剤"], "pages": 0},
     {"keywords": ["洗濯洗剤"], "pages": -1},
-    {"keywords": ["a", "b", "c", "d"], "pages": 3},            # 4 語 × 3 ページ = 12 > 9
-    {"keywords": ["a", "b", "c", "d", "e"], "pages": 2},       # 5 × 2 = 10 > 9
 ])
-def test_public_pages_out_of_range_or_too_many_fetches_is_invalid_request_and_costs_nothing(tool, args):
+def test_public_pages_out_of_range_is_invalid_request_and_costs_nothing(tool, args):
     app, ad = make_app("", limit=2)
     with TestClient(app) as tc:
         for _ in range(4):                                     # 回数制限(2)を超える回数でも弾かれ続けるだけ
@@ -306,26 +325,27 @@ def test_public_pages_out_of_range_or_too_many_fetches_is_invalid_request_and_co
     assert ad.calls == []
 
 
-@pytest.mark.parametrize("pages_n,keywords", [(3, ["a", "b", "c"]), (1, ["a", "b", "c", "d", "e"]),
-                                              (2, ["a", "b", "c", "d"]), (3, ["a"])])
-def test_public_keywords_times_pages_up_to_9_passes(pages_n, keywords):
+@pytest.mark.parametrize("keywords,pages_n", [(["a", "b", "c", "d", "e"], 100), (["a", "b", "c", "d"], 3),
+                                              (["a", "b", "c", "d", "e"], None)])
+def test_public_no_keywords_times_pages_limit(keywords, pages_n):
     app, ad = make_app("", adapter=FakeAdapter({}))
+    args = {"keywords": keywords} if pages_n is None else {"keywords": keywords, "pages": pages_n}
     with TestClient(app) as tc:
-        d = data(rpc(tc, "", "search_products", {"keywords": keywords, "pages": pages_n}))
+        d = data(rpc(tc, "", "search_products", args))
     assert d["ok"] is True
-    assert len(ad.calls) >= len(keywords)                      # 空の応答なので 1 ページ目で止まる語もある
+    assert len(ad.calls) == len(keywords)                      # 空の応答なので各語 1 ページ目で止まる
 
 
-def test_public_rate_limit_counts_a_call_as_pages_hits():
+def test_public_rate_limit_counts_explicit_pages_as_weight_and_omitted_as_one():
     # 20 回/分の窓で pages=3 は 3 回分: 6 回通って 7 回目（合計 21 回分）が弾かれる
     app, _ = make_app("", adapter=FakeAdapter(many_pages()), limit=20)
     with TestClient(app) as tc:
         outs = [data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"], "pages": 3}, ip="203.0.113.80"))
                 for _ in range(7)]
-        single = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"]}, ip="203.0.113.80"))
+        single = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"]}, ip="203.0.113.80"))  # 省略=1 回分
     assert [o["ok"] for o in outs] == [True] * 6 + [False]
     assert outs[6]["error"]["kind"] == "rate_limited"
-    assert single["ok"] is True                                # 18 回分使用済み・残り 2 回分で pages=1 は通る
+    assert single["ok"] is True                                # 18 回分使用済み・残り 2 回分で省略(1 回分)は通る
 
 
 def test_pages_weight_is_clamped_to_the_limit_so_a_single_call_can_always_pass():
@@ -336,6 +356,18 @@ def test_pages_weight_is_clamped_to_the_limit_so_a_single_call_can_always_pass()
         again = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"]}, ip="203.0.113.81"))
     assert big["ok"] is True
     assert again["error"]["kind"] == "rate_limited"
+
+
+def test_public_compare_offers_does_not_cut_groups_at_10_and_web_still_does():
+    pg = {("洗濯洗剤", 1): ([make_offer(f"x{i}", f"洗濯洗剤 {i} 900g", 1000 + i, shipping_status="included")
+                           for i in range(25)], 25)}
+    app, _ = make_app("", adapter=FakeAdapter(pg))
+    with TestClient(app) as tc:
+        d = data(rpc(tc, "", "compare_offers", {"keywords": ["洗濯洗剤"], "basis": "g"}))
+        web = tc.get("/compare?q=洗濯洗剤").text                        # 同じアプリの Web 画面（キャッシュ共有）
+    g = d["comparison"]["groups"][0]
+    assert g["count"] == 25 and len(g["offers"]) == 25                 # MCP は全件
+    assert "ほか 15 件は省略しています" in web                          # Web は従来の 10 件表示
 
 
 def test_upstream_errors_do_not_leak_keys_and_still_carry_credit():

@@ -24,7 +24,8 @@ from .orchestrator import Limits
 from .web_view import BASIS_UNUSED_NOTE, group_title, render
 
 PAGES = 1
-HITS = 30
+HITS = 30                      # 楽天の hits 上限（出典: 楽天 IchibaItem Search 仕様）。Web は 1 ページ分を画面に出す
+WEB_GROUP_OFFERS_MAX = 10      # 比較画面の各グループ・不明候補の表示件数（画面の表示仕様。MCP・CLI は切らない）
 
 _SECURITY_HEADERS = {
     "Content-Security-Policy": ("default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; "
@@ -153,7 +154,8 @@ def create_app(base_path: str | None = None, gate: Gate | None = None) -> FastAP
         common = dict(ng_keyword=ng_word or None, min_price=lo, max_price=hi, pages=PAGES, hits=HITS,
                       adapter=gate.adapter, sleep=lambda s: None, limits=Limits(min_interval_sec=0))
         if mode == "compare":
-            result = service.compare_offers(keywords, inc, exc_terms, None, basis_arg, **common)
+            result = service.compare_offers(keywords, inc, exc_terms, None, basis_arg,
+                                            group_offers_max=WEB_GROUP_OFFERS_MAX, **common)
         else:
             result = service.search_products(keywords, max_results=HITS, include_terms=inc,
                                              exclude_terms=exc_terms, **common)
