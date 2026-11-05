@@ -51,3 +51,4 @@
 - 2026-11-05 WP7-2: SPEC §7 に「既知の限界」(R1 空白を挟む販促語・R2 未知の数え語・R3 英字の数え語+英字・C3 末尾の1ケース/1箱)、結果の caveats の常設文に「数量は商品名からの読み取りで、誤ることがあります。購入前に商品ページで確認」を追加(pricing.QUANTITY_CAVEAT) / pytest 2492 passed（ブラインド 416/416・コーパス383 誤り0(xfail1)/不明67）
 - 2026-11-05 WP7-3: BUGLOG(要対策表の回数 5回・A1′/A2 に恒久化と commit 75d224f・A4 を追加)・HANDOFF 同期(コーパス383・単価不明 17.5% 実測・WP7 打ち止め) / pytest 2492 passed（ブラインド 416/416・コーパス383 誤り0(xfail1)/不明67）
 - 2026-11-05 WP7-4: 表試験に「まで」を追加・BUGLOG A4 のヨコテン件数を実数(2件)に・SPEC AC6 の caveats 行数を整合 / pytest 2564 passed（ブラインド 416/416・コーパス383 誤り0(xfail1)/不明67）
+- 2026-11-05 VPS配置: negura-tools-01 の /opt/apps/kaimono に 6a41135 を配置（ホストポート127.0.0.1:8014・外部未公開＝Tunnel ingress 未追加）。ローカル.envの読取が拒否されたため RAKUTEN_* は空 → healthz 503(想定内)・コンテナ unhealthy。/kaimono/ 200・POST /kaimono/mcp initialize 200・GET /kaimono/mcp 405 を内部で確認。鍵投入後は deploy_app.sh kaimono --env-only で反映
