@@ -304,3 +304,13 @@ def test_no_credentials_in_any_output(monkeypatch):
     r = service.search_products(["a"], adapter=ad, sleep=lambda s: None)
     blob = json.dumps(r, ensure_ascii=False)
     assert fake_id not in blob and fake_key not in blob and "SECRET" not in blob
+
+
+def test_search_products_default_max_results_returns_everything_fetched():
+    # 既定（None）は取得した全件（語数×pages×30 が上限）。30 件で黙って切らない
+    pages = {("a", p): ([make_offer(f"a{p}-{i}") for i in range(30)], 90) for p in (1, 2, 3)}
+    r = service.search_products(["a"], adapter=FakeAdapter(pages), pages=3, sleep=lambda s: None)
+    assert r["returned"] == 90 and not any("max_results" in n for n in r["notes"])
+    r = service.search_products(["a"], adapter=FakeAdapter(pages), pages=3, max_results=0,
+                                sleep=lambda s: None)
+    assert r["returned"] == 0 and any("max_results" in n for n in r["notes"])

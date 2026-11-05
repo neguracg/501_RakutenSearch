@@ -245,17 +245,97 @@ def test_valid_extremes_pass_the_public_check():
     assert ad.calls and ad.calls[0][1]["sort"] == "+itemPrice"
 
 
-def test_pages_argument_is_clamped_with_note():
-    offers = pages()[("洗濯洗剤", 1)][0]
-    app, ad = make_app("", adapter=FakeAdapter({("洗濯洗剤", 1): (offers, 100),
-                                               ("洗濯洗剤", 2): (offers, 100)}))
+def many_pages(n_per_page=30, pages_n=3, total=None, keyword="洗濯洗剤"):
+    """keyword の page 1..pages_n に、ページごとに別の商品 n_per_page 件を返す FakeAdapter 用の表。"""
+    total = total if total is not None else n_per_page * pages_n
+    return {(keyword, p): ([make_offer(f"{keyword}-{p}-{i}", f"{keyword} 900g×{i + 1}袋", 1000 + i,
+                                       shipping_status="included") for i in range(n_per_page)], total)
+            for p in range(1, pages_n + 1)}
 
-    async def work(c):
-        return await c.call_tool("search_products", {"keywords": ["洗濯洗剤"], "pages": 3})
 
-    d = run_session(app, "", work).structured_content
-    assert d["ok"] and any("1 ページ" in n for n in d["notes"])
-    assert all(kw.get("page") == 1 for _, kw in ad.calls)
+def test_public_pages_3_fetches_pages_1_2_3_and_returns_all_90_without_max_results():
+    app, ad = make_app("", adapter=FakeAdapter(many_pages()))
+    with TestClient(app) as tc:
+        d = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"], "pages": 3}))
+    assert d["ok"] and d["returned"] == 90 and len(d["offers"]) == 90
+    assert [kw["page"] for _, kw in ad.calls] == [1, 2, 3]
+    assert not any("max_results" in n or "固定" in n for n in d["notes"])
+    st = d["stats"]["per_keyword"][0]
+    assert (st["api_count"], st["received"], st["pages_fetched"], st["truncated"]) == (90, 90, 3, False)
+
+
+def test_public_default_pages_is_1_and_shows_truncated_when_more_hits_remain():
+    app, ad = make_app("", adapter=FakeAdapter(many_pages(pages_n=1, total=500)))
+    with TestClient(app) as tc:
+        d = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"]}))
+    assert [kw["page"] for _, kw in ad.calls] == [1]
+    assert d["returned"] == 30                                  # max_results 省略でも 1 ページ分はそのまま全部
+    st = d["stats"]["per_keyword"][0]
+    assert (st["api_count"], st["received"], st["pages_fetched"], st["truncated"]) == (500, 30, 1, True)
+
+
+def test_public_max_results_explicit_still_truncates_with_note():
+    app, _ = make_app("", adapter=FakeAdapter(many_pages()))
+    with TestClient(app) as tc:
+        d = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"], "pages": 3, "max_results": 40}))
+    assert d["returned"] == 40 and any("max_results" in n for n in d["notes"])
+
+
+def test_public_compare_offers_passes_pages_too():
+    app, ad = make_app("", adapter=FakeAdapter(many_pages(pages_n=2)))
+    with TestClient(app) as tc:
+        d = data(rpc(tc, "", "compare_offers", {"keywords": ["洗濯洗剤"], "pages": 2, "basis": "g"}))
+    assert d["ok"] and [kw["page"] for _, kw in ad.calls] == [1, 2]
+    assert d["stats"]["per_keyword"][0]["pages_fetched"] == 2
+
+
+@pytest.mark.parametrize("tool", ["search_products", "compare_offers"])
+@pytest.mark.parametrize("args", [
+    {"keywords": ["洗濯洗剤"], "pages": 4}, {"keywords": ["洗濯洗剤"], "pages": 0},
+    {"keywords": ["洗濯洗剤"], "pages": -1},
+    {"keywords": ["a", "b", "c", "d"], "pages": 3},            # 4 語 × 3 ページ = 12 > 9
+    {"keywords": ["a", "b", "c", "d", "e"], "pages": 2},       # 5 × 2 = 10 > 9
+])
+def test_public_pages_out_of_range_or_too_many_fetches_is_invalid_request_and_costs_nothing(tool, args):
+    app, ad = make_app("", limit=2)
+    with TestClient(app) as tc:
+        for _ in range(4):                                     # 回数制限(2)を超える回数でも弾かれ続けるだけ
+            d = data(rpc(tc, "", tool, args, ip="203.0.113.70"))
+            assert d["ok"] is False and d["error"]["kind"] == "invalid_request"
+            assert d["credit"] == CREDIT_TEXT
+    assert ad.calls == []
+
+
+@pytest.mark.parametrize("pages_n,keywords", [(3, ["a", "b", "c"]), (1, ["a", "b", "c", "d", "e"]),
+                                              (2, ["a", "b", "c", "d"]), (3, ["a"])])
+def test_public_keywords_times_pages_up_to_9_passes(pages_n, keywords):
+    app, ad = make_app("", adapter=FakeAdapter({}))
+    with TestClient(app) as tc:
+        d = data(rpc(tc, "", "search_products", {"keywords": keywords, "pages": pages_n}))
+    assert d["ok"] is True
+    assert len(ad.calls) >= len(keywords)                      # 空の応答なので 1 ページ目で止まる語もある
+
+
+def test_public_rate_limit_counts_a_call_as_pages_hits():
+    # 20 回/分の窓で pages=3 は 3 回分: 6 回通って 7 回目（合計 21 回分）が弾かれる
+    app, _ = make_app("", adapter=FakeAdapter(many_pages()), limit=20)
+    with TestClient(app) as tc:
+        outs = [data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"], "pages": 3}, ip="203.0.113.80"))
+                for _ in range(7)]
+        single = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"]}, ip="203.0.113.80"))
+    assert [o["ok"] for o in outs] == [True] * 6 + [False]
+    assert outs[6]["error"]["kind"] == "rate_limited"
+    assert single["ok"] is True                                # 18 回分使用済み・残り 2 回分で pages=1 は通る
+
+
+def test_pages_weight_is_clamped_to_the_limit_so_a_single_call_can_always_pass():
+    app, _ = make_app("", adapter=FakeAdapter(many_pages()), limit=2)
+    with TestClient(app) as tc:
+        big = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"], "pages": 3}, ip="203.0.113.81"))
+        # limit=2 では pages=3 は 2 回分に丸めて 1 回は通す（永久に通らなくならない）
+        again = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"]}, ip="203.0.113.81"))
+    assert big["ok"] is True
+    assert again["error"]["kind"] == "rate_limited"
 
 
 def test_upstream_errors_do_not_leak_keys_and_still_carry_credit():

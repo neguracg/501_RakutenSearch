@@ -152,3 +152,32 @@ def test_non_adapter_exception_propagates():
             raise RuntimeError("bug")
     with pytest.raises(RuntimeError):
         search_many(Boom({}), ["a"], sleep=lambda s: None)
+
+
+def test_keyword_stat_pages_fetched_and_truncated():
+    def pg(n, p):
+        return [make_offer(f"{p}-{i}") for i in range(n)]
+    # 取り切った（3 ページで 90 件中 90 件）: truncated でない
+    pages = {("a", p): (pg(30, p), 90) for p in (1, 2, 3)}
+    _, _, stats, _ = run(pages, ["a"], max_pages=3)
+    s = stats.per_keyword[0]
+    assert (s.pages_fetched, s.received, s.api_count, s.truncated) == (3, 90, 90, False)
+    # 3 ページ取ってもヒットが残る: truncated
+    pages = {("a", p): (pg(30, p), 500) for p in (1, 2, 3)}
+    _, _, stats, _ = run(pages, ["a"], max_pages=3)
+    s = stats.per_keyword[0]
+    assert (s.pages_fetched, s.received, s.api_count, s.truncated) == (3, 90, 500, True)
+    # 要求 1 ページで終わるが残りあり: truncated
+    _, _, stats, _ = run({("a", 1): (pg(30, 1), 500)}, ["a"])
+    assert stats.per_keyword[0].truncated is True and stats.per_keyword[0].pages_fetched == 1
+    # ヒットが少なく途中で終わる: truncated でない・取得ページ数は実際の数
+    _, _, stats, _ = run({("a", 1): (pg(30, 1), 45), ("a", 2): (pg(15, 2), 45)}, ["a"], max_pages=3)
+    s = stats.per_keyword[0]
+    assert (s.pages_fetched, s.received, s.truncated) == (2, 45, False)
+
+
+def test_keyword_stat_error_is_not_truncated_and_counts_only_fetched_pages():
+    pages = {("a", 1): ([make_offer("1")], 500), ("a", 2): AdapterError("timeout")}
+    _, _, stats, _ = run(pages, ["a"], max_pages=3)
+    s = stats.per_keyword[0]
+    assert s.error == "timeout" and s.pages_fetched == 1 and s.truncated is False

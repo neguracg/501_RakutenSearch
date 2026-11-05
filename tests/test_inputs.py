@@ -81,3 +81,60 @@ def test_admit_and_check_share_one_budget():
     g.admit("203.0.113.2", **OK)
     with pytest.raises(RateLimited):
         g.check("203.0.113.2")
+
+
+# --- pages（公開 MCP で pages を効かせる。2026-11-06） ---
+@pytest.mark.parametrize("pages", [1, 2, 3])
+def test_pages_1_to_3_pass(pages):
+    validate(**OK, pages=pages)
+
+
+@pytest.mark.parametrize("pages", [0, 4, -1, 1.5, "2", None, True, False])
+def test_pages_out_of_range_or_non_int_is_invalid(pages):
+    with pytest.raises(InvalidInput, match="pages"):
+        validate(**OK, pages=pages)
+
+
+@pytest.mark.parametrize("n,pages,ok", [(3, 3, True), (4, 2, True), (5, 1, True), (4, 3, False),
+                                        (5, 2, False), (5, 3, False), (2, 3, True)])
+def test_keywords_times_pages_is_at_most_9(n, pages, ok):
+    kw = dict(keywords=[f"k{i}" for i in range(n)], pages=pages)
+    if ok:
+        validate(**kw)
+    else:
+        with pytest.raises(InvalidInput, match="9"):
+            validate(**kw)
+
+
+def test_blank_keywords_do_not_count_toward_the_9():
+    validate(keywords=["a", "b", "c", " ", ""], pages=3)
+
+
+def test_rate_limiter_weight_counts_pages_and_rejection_consumes_nothing():
+    t = [0.0]
+    lim = RateLimiter(limit=5, window=60, clock=lambda: t[0])
+    lim.hit("ip", 3)
+    lim.hit("ip", 2)                                   # 合計 5 回分でちょうど満杯
+    with pytest.raises(RateLimited):
+        lim.hit("ip", 1)
+    t[0] = 61
+    lim.hit("ip", 3)                                   # 窓を出たので通る
+    with pytest.raises(RateLimited) as e:
+        lim.hit("ip", 3)                               # 3+3 > 5 -> 弾く（数えない）
+    assert e.value.retry_after >= 1
+    lim.hit("ip", 2)                                   # 弾いた分は消費していない: 3+2=5
+
+
+def test_rate_limiter_weight_larger_than_limit_is_clamped_so_one_call_can_pass():
+    lim = RateLimiter(limit=2, window=60, clock=lambda: 0.0)
+    lim.hit("ip", 3)
+    with pytest.raises(RateLimited):
+        lim.hit("ip", 1)
+
+
+def test_admit_charges_pages_and_default_is_one():
+    gate = Gate(FakeAdapter({}), RateLimiter(limit=4, window=60, clock=lambda: 0.0))
+    gate.admit("ip", **OK)                             # pages 省略（Web）= 1 回分
+    gate.admit("ip", **OK, pages=3)                    # 計 4
+    with pytest.raises(RateLimited):
+        gate.admit("ip", **OK)

@@ -38,9 +38,6 @@ _READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempo
                              open_world_hint=True)
 
 
-_PUBLIC_PAGES_NOTE = "公開版は 1 語につき 1 ページ（30 件）に固定している（pages の指定は無視した）。"
-
-
 def build_server(*, public: bool = False, gate: Gate | None = None) -> MCPServer:
     """public=False: 運営者用の stdio（3 ツール）。public=True: 公開 {BASE}/mcp 用（2 ツール・Gate 必須）。"""
     if public and gate is None:
@@ -60,10 +57,8 @@ def build_server(*, public: bool = False, gate: Gate | None = None) -> MCPServer
                 "kind": "rate_limited",
                 "message": f"短い時間に呼び出しが多すぎる。{exc.retry_after}秒ほど待ってからやり直すこと。"}}
         else:
-            out = fn(*args, pages=1, adapter=gate.adapter, sleep=lambda s: None,
+            out = fn(*args, pages=pages, adapter=gate.adapter, sleep=lambda s: None,
                      limits=Limits(min_interval_sec=0), **kw)
-            if pages != 1 and out.get("ok"):
-                out.setdefault("notes", []).append(_PUBLIC_PAGES_NOTE)
         out.update(mcp_credit_fields())
         return out
 
@@ -79,7 +74,11 @@ def build_server(*, public: bool = False, gate: Gate | None = None) -> MCPServer
             "sort は standard / +itemPrice（安い順）/ -itemPrice（高い順）/ -reviewCount など。"
             "include_terms（商品名に全部含む語）・exclude_terms（含んだら外す語）で商品名による絞り込みもできる"
             "（compare_offers と同じ判定。数字で始まる/終わる語は別の数の途中には一致しない: 2L は 12L に一致しない）。"
-            "pages は語ごとに取るページ数（1〜3、1ページ30件）。"
+            "pages は語ごとに取るページ数（1〜3、1ページ30件。省略は1）。多く取りたい時は pages を上げる"
+            "（検索語の数×ページ数は9まで）。語ごとの取得状況は stats.per_keyword"
+            "（api_count=楽天のヒット数、received=取得件数、pages_fetched=取得ページ数、"
+            "truncated=true は要求したページを取り切ってもヒットがまだ残っている）。"
+            "max_results は返す件数の上限で、省略すると取得した全件を返す。"
             "各候補に商品固有URL(url)、価格、送料区分(shipping_status: included=送料込み/"
             "separate=送料別/unknown)、数量の読み取り結果(quantity: count_total=総個数、content_amount=1個あたり内容量、"
             "content_dimension/content_unit=容量ml・重さg・長さm・電力W等、measure_total=総量。confidenceがhighの時だけ値が入る)が付く。"
@@ -88,14 +87,14 @@ def build_server(*, public: bool = False, gate: Gate | None = None) -> MCPServer
     def search_products(keywords: list[str], ng_keyword: str | None = None,
                         min_price: int | None = None, max_price: int | None = None,
                         sort: str = "standard", pages: int = 1,
-                        max_results: int = 30, include_terms: list[str] | None = None,
+                        max_results: int | None = None, include_terms: list[str] | None = None,
                         exclude_terms: list[str] | None = None) -> dict[str, Any]:
         return invoke(service.search_products, keywords, ng_keyword=ng_keyword, min_price=min_price,
                       max_price=max_price, sort=sort, pages=pages, max_results=max_results,
                       include_terms=include_terms, exclude_terms=exclude_terms,
                       check=dict(keywords=keywords, ng_keyword=ng_keyword, min_price=min_price,
                                  max_price=max_price, sort=sort, include_terms=include_terms,
-                                 exclude_terms=exclude_terms))
+                                 exclude_terms=exclude_terms, pages=pages))
 
     @server.tool(
         name="compare_offers",
@@ -117,7 +116,8 @@ def build_server(*, public: bool = False, gate: Gate | None = None) -> MCPServer
             "結果は groups（basis の次元が同じ候補。単位価格の安い順）・unknown_offers（basis の量が読めず単価を出せない候補）・"
             "cheapest_price / cheapest_unit_price / cheapest_total / cheapest_for_quantity・caveats・notes。"
             "cheapest_* が null の理由は必ず caveats に書いてあるので、利用者へそのまま伝えること。"
-            "keywords・ng_keyword・min_price/max_price・sort・pages は search_products と同じ。"),
+            "keywords・ng_keyword・min_price/max_price・sort・pages は search_products と同じ"
+            "（pages は 1〜3、1ページ30件、検索語の数×ページ数は9まで）。"),
     )
     def compare_offers(keywords: list[str], include_terms: list[str] | None = None,
                        exclude_terms: list[str] | None = None, desired_quantity: float | None = None,
@@ -130,7 +130,7 @@ def build_server(*, public: bool = False, gate: Gate | None = None) -> MCPServer
                       check=dict(keywords=keywords, ng_keyword=ng_keyword, min_price=min_price,
                                  max_price=max_price, sort=sort, include_terms=include_terms,
                                  exclude_terms=exclude_terms, basis=basis,
-                                 desired_quantity=desired_quantity))
+                                 desired_quantity=desired_quantity, pages=pages))
 
     if public:
         return server   # 定番品（個人の購入リスト）は公開面に出さない（AC-W8）

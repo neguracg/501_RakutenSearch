@@ -178,7 +178,7 @@ def _base_notes(offers: list[Offer], stats: SearchStats, mock: bool,
 
 def search_products(keywords, *, ng_keyword: str | None = None, min_price: int | None = None,
                     max_price: int | None = None, sort: str = "standard", pages: int = 1,
-                    hits: int = 30, max_results: int = 30,
+                    hits: int = 30, max_results: int | None = None,
                     include_terms=None, exclude_terms=None,
                     adapter: MarketplaceAdapter | None = None, sleep=None,
                     limits: Limits | None = None) -> dict:
@@ -195,7 +195,7 @@ def search_products(keywords, *, ng_keyword: str | None = None, min_price: int |
     offers, stats, mock = r
     _annotate(offers)
     kept, term_notes = filter_by_terms(offers, inc, exc)     # 比較（compare）と同じ絞り込み（S9）
-    shown = kept[:max(0, max_results)]
+    shown = kept if max_results is None else kept[:max(0, max_results)]   # None は全件（上限は語数×pages×30）
     notes = _base_notes(kept, stats, mock) + term_notes
     if len(shown) < len(kept):
         notes.append(f"候補 {len(kept)} 件のうち先頭 {len(shown)} 件だけ返した（max_results）。")

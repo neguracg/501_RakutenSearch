@@ -15,6 +15,8 @@ MAX_KEYWORDS = 5                 # 検索語・含む語・除く語・楽天側
 MAX_BYTES = 128                  # 1 語の長さ（UTF-8 で 128 バイト = 半角 128 文字 = 全角 42 文字）
 MAX_PRICE = 10_000_000
 MAX_QUANTITY = 1e12
+MAX_PAGES = 3                    # 語ごとに取るページ数（1 ページ 30 件）
+MAX_FETCHES = 9                  # 検索語の数 × ページ数の上限（API は 1 秒 1 回直列なので 1 呼び出し最大約 9 秒）
 # 楽天 IchibaItem Search の sort（公式の値）
 SORTS = frozenset({"standard", "+affiliateRate", "-affiliateRate", "+reviewCount", "-reviewCount",
                    "+reviewAverage", "-reviewAverage", "+itemPrice", "-itemPrice",
@@ -63,10 +65,22 @@ def _price(value, label: str) -> None:
         raise InvalidInput(f"{label}は 0〜{MAX_PRICE:,} の整数で指定してください。")
 
 
+def check_pages(pages) -> int:
+    """語ごとに取るページ数の検査（int の 1〜MAX_PAGES）。不正なら InvalidInput。"""
+    if isinstance(pages, bool) or not isinstance(pages, int) or not 1 <= pages <= MAX_PAGES:
+        raise InvalidInput(f"pages は 1〜{MAX_PAGES} の整数で指定してください（1 ページ 30 件）。")
+    return pages
+
+
 def validate(*, keywords, ng_keyword=None, min_price=None, max_price=None, sort="standard",
-             include_terms=None, exclude_terms=None, basis=None, desired_quantity=None) -> None:
+             include_terms=None, exclude_terms=None, basis=None, desired_quantity=None,
+             pages=1) -> None:
     """不正なら InvalidInput。正規化後の値は返さない（service が自分で正規化する）。"""
-    _terms(keywords, "検索語", allow_empty=False)
+    kws = _terms(keywords, "検索語", allow_empty=False)
+    pages = check_pages(pages)
+    if len(kws) * pages > MAX_FETCHES:
+        raise InvalidInput(f"検索語の数×ページ数は {MAX_FETCHES} まで（検索語 {len(kws)} 語 × {pages} ページ"
+                           "は多すぎます。語かページ数を減らしてください）。")
     _terms(include_terms, "含む語", allow_empty=True)
     _terms(exclude_terms, "除く語", allow_empty=True)
     if ng_keyword is not None:

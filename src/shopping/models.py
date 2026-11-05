@@ -73,6 +73,8 @@ class KeywordStat:
     api_count: int | None = None
     received: int = 0
     error: str | None = None
+    pages_fetched: int = 0      # 実際に取得できたページ数
+    truncated: bool = False     # 要求したページを取り切ったが、楽天のヒット数(api_count)にはまだ届いていない
 
 
 @dataclass

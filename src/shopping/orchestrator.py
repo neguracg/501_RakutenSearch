@@ -65,6 +65,7 @@ def search_many(adapter, keywords: list[str], *, max_pages: int = 1, hits: int =
                 break
             if stat.api_count is None:
                 stat.api_count = api_count
+            stat.pages_fetched += 1
             stat.received += len(offers)
             stats.total_received += len(offers)
             for offer in offers:
@@ -79,6 +80,9 @@ def search_many(adapter, keywords: list[str], *, max_pages: int = 1, hits: int =
                         existing.matched_keywords.append(keyword)
             if not offers or page * hits >= api_count:
                 break
+        else:
+            # break せずに要求ページを取り切った。ヒット数がまだ残っているなら打ち切り（上限で切った）
+            stat.truncated = stat.api_count is not None and stat.api_count > stat.received
         if rate_limited:
             stats.stopped_reason = "rate_limited"
             break

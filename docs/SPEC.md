@@ -238,7 +238,7 @@ S1〜S11・W1〜W5 との整理（矛盾箇所の注記）:
 - `compare_offers(keywords, include_terms=None, exclude_terms=None, desired_quantity=None, basis=None, ng_keyword, min_price, max_price, sort, pages)`。`required_spec` と `unit="ロール"` 既定は廃止（§8）。結果の各候補に `quantity`（§7 の項目）と `unit_price`・`unit_price_label`、`comparison` に §8 Q1 のキー（`basis` `basis_label` `groups` `unknown_offers` `cheapest_*` `caveats` `notes`）。
 - INSTRUCTIONS・ツール説明は特定カテゴリを前提にしない。「include_terms に仕様（例: 『詰め替え』『ダブル』『単3』）を入れる」「仕様差の判定は AI 側の責任」を明記し、例は3カテゴリ以上。
 - **stdio MCP と CLI の既定はモック**（架空データ。API を呼ばない）。実 API は CLI の `--live`、stdio MCP の環境変数 `SHOPPING_LIVE=1` を明示した時だけ（§11）。`SHOPPING_MOCK=1` / `--mock` は互換のため残す（明示のモックは常に勝つ）。公開Web は実 API が既定（鍵が無ければ起動しても `/healthz` が 503）。
-- 公開リモートMCP: `{BASE}/mcp`（Streamable HTTP・stateless・JSON 応答・認証なし）。ツールは `search_products` と `compare_offers` の 2 つだけ（`find_regular_item` は出さない）。流量保護（直列化・キャッシュ・IP別回数制限）は Web と共通（guard.py）。pages は 1 に固定。`GET {BASE}/mcp`（と DELETE）は 405（`Allow: POST`。stateless・JSON 応答のため SSE ストリームを開かない）。
+- 公開リモートMCP: `{BASE}/mcp`（Streamable HTTP・stateless・JSON 応答・認証なし）。ツールは `search_products` と `compare_offers` の 2 つだけ（`find_regular_item` は出さない）。流量保護（直列化・キャッシュ・IP別回数制限）は Web と共通（guard.py）。`pages`（語ごとに取るページ数、int 1〜3、既定 1、1 ページ 30 件）は公開面でも効く（Web は pages=1 のまま）。検索語の数×ページ数は 9 まで（超えたら `invalid_request`・API 呼び出し 0 回。API は 1 秒 1 回直列なので 1 呼び出し最大約 9 秒）。IP 別回数制限は 1 呼び出しを pages 回分として数える（Web は 1 回分）。`search_products` の `max_results` 既定は未指定＝取得した全件（上限は語数×pages×30）で、指定した時だけ切り詰めて notes に出す。語ごとの取得状況は `stats.per_keyword[]` の `api_count`（楽天のヒット数）・`received`（取得件数）・`pages_fetched`（取得ページ数）・`truncated`（要求ページを取り切ってもヒットが残る）。`GET {BASE}/mcp`（と DELETE）は 405（`Allow: POST`。stateless・JSON 応答のため SSE ストリームを開かない）。
 - 公開面の入力検査（guard.Gate.admit → inputs.validate。Web と MCP が同じ関数を通る）: 検索語・含む語・除く語・楽天側の除外語はそれぞれ 1〜5 語（除外語は空白区切り）、1 語の長さは楽天の上限（半角128文字）を安全側に解釈し UTF-8 で 128 バイト以内（利用者向けの文言は「全角42文字（半角128文字）」。S8。判定は Gate とアダプタが同じ `inputs.fits_limit`）、価格は 0〜10,000,000 の整数、`sort` は楽天公式の値（standard / ±affiliateRate / ±reviewCount / ±reviewAverage / ±itemPrice / ±updateTimestamp）、`basis` は換算表の別名か「個」、`desired_quantity` は有限の正数。ロック取得・最小間隔のスリープ・API 呼び出しより前に検査し、弾いた入力は API 枠も IP 別回数も消費しない。MCP は不正入力を `invalid_request` のエラー結果（クレジット付き）で返す。入力値そのものはメッセージに入れない。
 - ChatGPT（Plus）からの実接続は未検証（登録手順は README）。
 
@@ -257,7 +257,7 @@ S1〜S11・W1〜W5 との整理（矛盾箇所の注記）:
 - 規約から来る画面の義務と公開面の入力検査・ヘルスチェックは AC-W1〜W11（§12）に列挙する。全ページのフッターに、楽天のクレジット（公式テキスト版・無改変）・運営者の責任表示・価格在庫の注意を出す。
 - 結果画面から出す外部リンクは楽天の商品URLだけ（クレジットのリンクを除く）。
 - 他社商品との併記は出典明示で可（楽天 FAQ）。価格・在庫のキャッシュは 24 時間以内。公開Webのメモリキャッシュは最大 10 分。
-- 公開面の流量保護（Web と MCP は共通の guard 層を通す）: 楽天 API 呼び出しはプロセス全体で 1 秒 1 回に直列化、同条件は最大 10 分キャッシュ、IP 別に回数制限（既定 20 回/分）。pages=1・hits=30 固定。
+- 公開面の流量保護（Web と MCP は共通の guard 層を通す）: 楽天 API 呼び出しはプロセス全体で 1 秒 1 回に直列化、同条件は最大 10 分キャッシュ、IP 別に回数制限（既定 20 回/分）。Web は pages=1・hits=30 固定。MCP は pages 1〜3（回数制限は pages 回分、検索語の数×ページ数は 9 まで）・hits=30。
 - Cookie・ログイン・アクセス解析・個人情報の保存は無し。
 
 ## 12. 受入条件（Phase 1）
