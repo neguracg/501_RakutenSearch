@@ -1430,7 +1430,10 @@ def test_p4_same_number_with_container_outer_is_multiplied(text, count, amount, 
     "text",
     [
         "モニター 27インチ 1080P",
-        "ウェブカメラ 60P 対応",
+        "モニター 4K 2160P",
+        "ポイント5Pアップ",
+        "3点以上で10%OFF",
+        "2点まで",
         "ポイント10P還元",
         "2点購入でクーポン",
         "プリンター 12ヶ月保証",
@@ -1452,7 +1455,6 @@ def test_p3_non_quantity_phrases_are_none(text):
         ("ミネラルウォーター 500ml×24本 10P還元", 24, 500),
         ("天然水 2L×6本 2点購入でクーポン", 6, 2000),
         ("ミネラルウォーター 500ml×24本 1080P", 24, 500),
-        ("単3電池 40本 60P", 40, None),
     ],
 )
 def test_p3_noise_phrases_do_not_change_a_real_quantity(text, count, amount):
@@ -1487,3 +1489,75 @@ def test_p3_noise_does_not_create_a_false_cheapest():
     _assert_up(r, a, 20)
     _assert_up(r, b, 2000 / 12000 * 100)
     assert r.cheapest_unit_price.item_name == b
+
+
+# --- WP5-0b: X1〜X5 の確定 -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "ティッシュ 100P",  # P は 1〜99 だけ
+        "ティッシュ 5P増量",
+        "ティッシュ 5PUP",
+        "ティッシュ 5Pアップ",
+        "ティッシュ 5Pポイント",
+        "ティッシュ 5P倍",
+        "セット商品 2点でお得",
+        "セット商品 3点以上",
+    ],
+)
+def test_x1_p_and_ten_exclusions_are_not_counters(text):
+    q = _parse(text)
+    assert _conf(q) == "none", text
+    assert q.count_total is None
+
+
+def test_x1_sixty_p_alone_is_a_counter():
+    # X1: 60P は数える（1〜99）
+    q = _parse("ウェブカメラ 60P")
+    assert _conf(q) == "high"
+    assert q.count_total == 60
+
+
+def test_x1_sixty_p_disagreeing_with_other_count_is_low():
+    # X1: 他の個数と食い違えば P0 で low
+    q = _parse("単3電池 40本 60P")
+    assert _conf(q) == "low"
+    assert q.count_total is None and q.measure_total is None
+
+
+def test_x2_other_word_restatement_equal_to_product_is_high():
+    q = _parse("トイレットペーパー 12ロール×4パック(48個)")
+    assert _conf(q) == "high"
+    assert q.count_total == 48
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "トイレットペーパー 12ロール×4パック 5冊",  # X3 鎖の後ろに積と無関係な数え語付きの数
+        "トイレットペーパー 75m×12ロール×4パック 5冊",
+        "ゼリー 3個入り 3冊",  # X4 容器語でない同数
+        "ゼリー 4個入り 4冊",
+    ],
+)
+def test_x3_x4_conflicting_counter_candidates_are_low(text):
+    q = _parse(text)
+    assert _conf(q) == "low", text
+    assert q.count_total is None and q.measure_total is None
+
+
+@pytest.mark.parametrize(
+    "text,count",
+    [
+        ("お菓子 12本入 3P", 36),  # X5 入数の直後の P/ヶ/点
+        ("お菓子 12本入 3ヶ", 36),
+        ("お菓子 12本入 3点", 36),
+        ("お菓子 6個入り 4P", 24),
+    ],
+)
+def test_x5_p_ke_ten_right_after_pack_size_count(text, count):
+    q = _parse(text)
+    assert _conf(q) == "high", text
+    assert q.count_total == count

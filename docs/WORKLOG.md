@@ -38,3 +38,4 @@
 - 2026-11-05 WP4-2: B4 公開入口4×入力項目の未固定セルを試験で固定(tests/test_wp4_cells.py。MCP compare の ng_keyword・価格、basis・desired_quantity の回数無消費×MCP/Web、service 省略既定モック)、C19 GET /mcp 405 に締切、basis/desired_quantity の検査を inputs に一本化 / pytest 932 passed, 31 skipped(入口に無い項目のセル)（ブラインド 220/220。自己変異 17件中17件で赤）
 - 2026-11-05 WP4-3: S8〜S10 の Web・CLI・MCP・README・SPEC(一覧でも含む/除く語、basis は一覧で不使用の表示、全角42文字の文言、指数表記なし・小さな単価の桁増し)、BUGLOG A1(!重)・B1・B2・B3 / pytest 932 passed（ブラインド 220/220）
 - 2026-11-05 WP5-0: 一致原則(P0〜P4)の母集団をブラインドに追記(既存220件は不変) / 392件
+- 2026-11-05 WP5-0b: X1〜X5 確定(P精密化・別語言い直し・低信頼化・入数直後)をブラインドに固定、矛盾した追記分を修正 / 413件
