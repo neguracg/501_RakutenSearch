@@ -59,3 +59,4 @@
 - 2026-11-06 WP8-2: 楽天が HTTP 400 にする『漢字以外の1文字だけの語』（keyword・NGKeyword）を送る前に弾く（inputs.check_term_lengths。kind=keyword_term_too_short。公開Web・公開MCP・CLI/service の3入口）。根拠: 公式 https://webservice.rakuten.co.jp/documentation/ichiba-item-search の keyword「半角2文字以上または全角1文字（ひらがな・カタカナ・記号は2文字以上）」＋実API実測（半角1字・全角の数字/英字/かな/長音/記号1字は400、漢字1字・2字語は通る、全角空白も区切り）/ 既存テストの1文字キーワードを2文字へ / pytest 2693 passed（ブラインド 416/416）
 - 2026-11-06 WP8-3: 文書同期（SPEC §7 P0 の徹底・R4・§11 入力検査の1文字の語・AC-W10 / BUGLOG A5 と HTTP 400 の2行 / DECISIONS 打ち止めの解除 / HANDOFF 件数: pytest 2693・コーパス390 不明73=18.7%）
 - 2026-11-06 WP8-4: verifier 指摘 B1-B3/C1/C3 を修正（/ の後ろの 1<数え語>・後置の 1ケースN本入り・最大N回分は high に戻し、択一(または/or/〜)・から/以下/以内/未満・MAX を low に。コーパス399 不明73=18.3%・誤り0 / pytest 2733 passed・ブラインド 416/416）
+- 2026-11-06 WP8-5: verifier 指摘 B4-B6（択一は標識を挟む時だけ・個数1のからは候補にしない・MAX/MIN は語境界つき）/ コーパス407 誤り0(xfail1)・不明73=17.9% / pytest 2760 passed・ブラインド 416/416。WP8 の規則変更はここで打ち止め
