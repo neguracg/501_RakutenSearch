@@ -10,7 +10,7 @@ from shopping.adapters.base import AdapterError
 from shopping.adapters.mock import MockAdapter
 from shopping.guard import Gate, GuardedAdapter, RateLimiter
 from shopping.web import create_app
-from shopping.web_view import CREDIT_HTML, FRESHNESS_TEXT, OPERATOR_TEXT
+from shopping.credit import CREDIT_HTML, FRESHNESS_TEXT, OPERATOR_TEXT
 
 SECRET_ID = "APPID-SECRET-1234567890"
 SECRET_KEY = "ACCESSKEY-SECRET-abcdef"

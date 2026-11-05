@@ -1,6 +1,7 @@
 # @owns 公開Webアプリの HTTP 入口（ルーティング・入力検査・BASE_PATH・エラー画面）。流量保護は guard、画面は web_view に委譲
 """公開Web（FastAPI）。誰でも開ける・ログイン無し。楽天 API を呼ぶのはこのサーバーだけで、
 アクセスキー・アプリIDはブラウザへ一切渡さない。search / compare のみ（定番品は出さない）。
+{BASE}/mcp にリモートMCP（Streamable HTTP・認証なし・2 ツール）を同居させ、Web と同じ Gate を通す。
 
 起動: PYTHONPATH=src BASE_PATH=/kaimono uvicorn shopping.web:app
 """
@@ -8,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -15,7 +17,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import service
 from .config import load_credentials
-from .guard import Gate, RateLimited, pick_client_ip
+from .guard import Gate, RateLimited, client_ip_var, pick_client_ip
+from .mcp_server import build_server
 from .orchestrator import Limits
 from .web_view import group_title, render
 
@@ -80,10 +83,45 @@ def _parse_price(raw: str | None, label: str) -> int | None | str:
     return int(t)
 
 
+class _McpMiddleware:
+    """{BASE}/mcp への HTTP を MCP の ASGI アプリへ渡し、呼び出し元 IP を guard に伝える。"""
+
+    def __init__(self, app, mcp_app, path: str):
+        self.app = app
+        self.mcp_app = mcp_app
+        self.path = path
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["path"].rstrip("/") == self.path:
+            headers = dict(scope.get("headers") or [])
+            ip = pick_client_ip(headers.get(b"cf-connecting-ip", b"").decode("latin-1") or None,
+                                (scope.get("client") or (None,))[0])
+            token = client_ip_var.set(ip)
+            try:
+                await self.mcp_app(dict(scope, path=self.path), receive, send)
+            finally:
+                client_ip_var.reset(token)
+            return
+        await self.app(scope, receive, send)
+
+
 def create_app(base_path: str | None = None, gate: Gate | None = None) -> FastAPI:
     base = normalize_base_path(os.environ.get("BASE_PATH") if base_path is None else base_path)
     gate = gate or Gate(service.make_adapter())
-    app = FastAPI(title="買い物リサーチ", docs_url=None, redoc_url=None, openapi_url=None)
+    mcp_path = f"{base}/mcp"
+    # stateless・JSON 応答（Cloudflare Tunnel 越しに SSE の長時間接続へ頼らない）。
+    # host を localhost 以外にして DNS rebinding 保護（localhost 限定）を自動有効にしない。
+    mcp_app = build_server(public=True, gate=gate).streamable_http_app(
+        streamable_http_path=mcp_path, json_response=True, stateless_http=True, host="0.0.0.0")
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        async with mcp_app.router.lifespan_context(mcp_app):
+            yield
+
+    app = FastAPI(title="買い物リサーチ", docs_url=None, redoc_url=None, openapi_url=None,
+                  lifespan=lifespan)
+    app.add_middleware(_McpMiddleware, mcp_app=mcp_app, path=mcp_path)
     app.state.base = base
     app.state.gate = gate
     router = APIRouter()

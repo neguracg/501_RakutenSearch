@@ -14,7 +14,7 @@ ChatGPT の通常チャットで「楽天で○○を条件付きで探して」
 | Phase | 内容 | 状態 |
 |---|---|---|
 | 1 | 楽天検索エンジン・数量正規化・単価比較・定番品マスタ・MCP サーバー（ローカル） | 今回 |
-| 1.5 | 公開Web（search / compare のみ。楽天規約 第10条(10) 適合のため。定番品 regulars は出さない） | 今回 |
+| 1.5 | 公開Web とリモートMCP `{BASE}/mcp`（search / compare のみ。楽天規約 第10条(10) 適合のため。定番品 regulars は出さない） | 今回 |
 | 2 | Yahoo!ショッピング Adapter | 未着手 |
 | 3 | Amazon Adapter（Creators API の利用資格確認が先） | 未着手 |
 | 4 | ヨドバシ（一般向け API 未確認。取得手段の調査が先） | 未着手 |
@@ -100,21 +100,25 @@ item_url（商品固有 URL）, fetched_at（ISO8601・JST）, quantity（後述
 
 - stdio の MCP サーバー。ツール: `search_products` / `compare_offers` / `find_regular_item`。
 - 環境変数 `SHOPPING_MOCK=1` でフィクスチャを返す（API を呼ばない）。
-- ChatGPT（Plus）からの実接続は未検証。接続手順と検証は別課題。
+- 公開リモートMCP: `{BASE}/mcp`（Streamable HTTP・stateless・JSON 応答・認証なし）。ツールは `search_products` と `compare_offers` の 2 つだけ（`find_regular_item` は出さない）。流量保護（直列化・キャッシュ・IP別回数制限）は Web と共通（guard.py）。pages は 1 に固定。
+- ChatGPT（Plus）からの実接続は未検証（登録手順は README）。
 
 ## 11. 規約（運用方針）
 
 楽天ウェブサービス規約 第10条（10）「特定の人のみがアクセスできる環境での使用」は原則禁止。この規約に適合させるため、次の方針で運用する（判断の出典: 消込表 #920）。
 
 - 楽天に登録するアプリは **誰でも開ける公開Webアプリ** `https://app.negura.website/kaimono/`。ログイン・Cloudflare Access・IP制限を掛けない。
-- CLI と MCP サーバーは、同じ登録アプリの **運営者用ツール**（同じアプリIDで運営者がテスト・調査に使う）という位置づけ。
+- 普段使い（ChatGPT・Claude・Codex 等の AI から呼ぶ・ブラウザで使う）は公開アプリ（Web と `{BASE}/mcp`）経由に一本化する。
+- ローカルの CLI・stdio MCP で実 API を呼ぶのは運営者による開発・試験に限る（既定はモック）。同じ登録アプリの運営者用ツールという位置づけ。
+- 定番品は利用者側（AI の記憶・指示やローカル）で持ち、サーバーには置かない。
 - 公開アプリと偽装する方法（2人限定なのに公開と称する等）は採らない。
-- 公開Webは search / compare のみ。定番品（regulars。個人の購入リスト）は出さない。
+- 公開面（Web と `{BASE}/mcp`）は search / compare のみ。定番品（regulars。個人の購入リスト）は出さない。
+- 公開MCP の結果には `credit` `credit_url` `operator` `web` を必ず含め（エラー結果にも）、INSTRUCTIONS で回答末尾へクレジットを添えるよう指示する。
 - 楽天のアクセスキー・アプリIDはサーバー側だけが持つ。ブラウザへの応答に一切含めない。
 - 規約から来る画面の義務は AC-W1〜W8（§12）に列挙する。全ページのフッターに、楽天のクレジット（公式テキスト版・無改変）・運営者の責任表示・価格在庫の注意を出す。
 - 結果画面から出す外部リンクは楽天の商品URLだけ（クレジットのリンクを除く）。
 - 他社商品との併記は出典明示で可（楽天 FAQ）。価格・在庫のキャッシュは 24 時間以内。公開Webのメモリキャッシュは最大 10 分。
-- 公開Webの流量保護: 楽天 API 呼び出しはプロセス全体で 1 秒 1 回に直列化、同条件は最大 10 分キャッシュ、IP 別に回数制限（既定 20 回/分）。pages=1・hits=30 固定。
+- 公開面の流量保護（Web と MCP は共通の guard 層を通す）: 楽天 API 呼び出しはプロセス全体で 1 秒 1 回に直列化、同条件は最大 10 分キャッシュ、IP 別に回数制限（既定 20 回/分）。pages=1・hits=30 固定。
 - Cookie・ログイン・アクセス解析・個人情報の保存は無し。
 
 ## 12. 受入条件（Phase 1）
@@ -146,3 +150,4 @@ item_url（商品固有 URL）, fetched_at（ISO8601・JST）, quantity（後述
 | AC-W6 | IP 別回数制限を超えると 429 で待つよう案内し、楽天の 429/timeout は混雑画面になる |
 | AC-W7 | BASE_PATH 有り/無しの両方で全ルート・リンクが通る。`{BASE}/healthz` が 200 |
 | AC-W8 | 定番品（個人の購入リスト）を公開Webに出さない。Cookie・個人情報を保存しない |
+| AC-W9 | `{BASE}/mcp`（Streamable HTTP・認証なし）で MCP の initialize・tools/list・compare_offers が通り、公開するツールは search_products と compare_offers の2つだけ。結果に credit を含み、流量保護は Web と共通 |

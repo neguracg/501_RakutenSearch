@@ -77,6 +77,20 @@
 - `docs/index.html` に「使ってみる: https://app.negura.website/kaimono/」のリンクと、クレジット表示を足す（「開発中」の文言を実態に合わせる）。
 - README に Web の起動方法（ローカル）と本番URL、Docker の説明。
 
+### WP2-5 リモートMCP（ChatGPT のチャットから呼ぶ本命の入口。2026-11-05 追加）
+
+SPEC §1 の目的は「ChatGPT の通常チャットから呼ぶ」。ChatGPT（Web/アプリ）は localhost の stdio MCP に繋げないため、
+公開アプリに **Streamable HTTP の MCP エンドポイント `{BASE}/mcp`** を同居させる（ChatGPT の開発者モード→コネクタ作成で URL を登録、認証は「なし」）。
+
+- `mcp_server.build_server()` の同じツール定義を流用し、**公開面では `search_products` と `compare_offers` の2つだけ**を出す（`find_regular_item` は出さない＝AC-W8）。stdio の `python -m shopping.mcp_server` はローカル用に3ツールのまま残す。
+- mcp 2.3.0 の Streamable HTTP（ASGI アプリ）を FastAPI に `{BASE}/mcp` でマウント。stateless・JSON 応答で動く設定を優先（Cloudflare Tunnel 越しで SSE の長時間接続に頼らない）。
+- MCP 経由の呼び出しも Web と**同じ流量保護**（1秒1回の直列化・10分キャッシュ・IP別回数制限）を通す。保護は service の手前の共通層に置き、Web と MCP の二重実装にしない。
+- 応答にキー・アプリIDを出さない。ツール説明文（INSTRUCTIONS）の「個人用」を「公開の買い物リサーチツール」に直し、caveats を伝える指示は残す。
+- **規約の義務を優先（腱さん指示）**: 公開MCP のツール結果に `credit: "Supported by Rakuten Developers"`・`credit_url: "https://developers.rakuten.com/"`・`operator: "個人開発者 negura が運営（楽天グループとは無関係）"`・`web: PUBLIC_BASE_URL` を必ず含め（エラー結果にも）、INSTRUCTIONS に「回答の末尾にクレジット（Supported by Rakuten Developers）を添えること」と書く。試験で tools/call の結果に credit が入ることを確認。
+- 試験: in-process の MCP クライアント（streamable http）で `{BASE}/mcp` に initialize → tools/list（2件だけ・find_regular_item が無い）→ compare_offers 呼び出しが通る。BASE_PATH 有り/無しの両方。
+- 実起動確認: uvicorn（SHOPPING_MOCK=1・BASE_PATH=/kaimono）で `/kaimono/mcp` に initialize と tools/list が通ることを MCP クライアントで確認し、停止する。
+- README に ChatGPT への登録手順（設定→アプリとコネクタ→詳細設定→開発者モード ON→作成→URL `https://app.negura.website/kaimono/mcp`・認証なし）を書く。画面名は変わりうるので「2026-11 時点」と添える。
+
 ## 受入条件（SPEC §12 へ転記する）
 
 | # | 条件 |
@@ -89,6 +103,7 @@
 | AC-W6 | IP 別回数制限を超えると 429 で待つよう案内し、楽天の 429/timeout は混雑画面になる |
 | AC-W7 | BASE_PATH 有り/無しの両方で全ルート・リンクが通る。`{BASE}/healthz` が 200 |
 | AC-W8 | 定番品（個人の購入リスト）を公開Webに出さない。Cookie・個人情報を保存しない |
+| AC-W9 | `{BASE}/mcp`（Streamable HTTP・認証なし）で MCP の initialize・tools/list・compare_offers が通り、公開するツールは search_products と compare_offers の2つだけ。流量保護は Web と共通 |
 
 ## 報告に含めるもの
 

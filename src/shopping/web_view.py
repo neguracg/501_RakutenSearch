@@ -5,15 +5,7 @@ from __future__ import annotations
 from jinja2 import DictLoader, Environment
 
 from .adapters.rakuten import is_item_url
-
-CREDIT_HTML = (
-    '<!-- Rakuten Web Services Attribution Snippet FROM HERE -->\n'
-    '<a href="https://developers.rakuten.com/" target="_blank">Supported by Rakuten Developers</a>\n'
-    '<!-- Rakuten Web Services Attribution Snippet TO HERE -->'
-)
-OPERATOR_TEXT = ("このサイトは個人開発者 negura が作成・運営しており、内容の責任は運営者にあります。"
-                 "楽天グループとは関係ありません。")
-FRESHNESS_TEXT = "価格・在庫は検索時点のもの。購入前に楽天市場の商品ページで確認してください。"
+from .credit import CREDIT_HTML, FRESHNESS_TEXT, OPERATOR_TEXT
 
 _CSS = """
 :root{--bg:#fff;--fg:#1a1a1a;--muted:#5a5a5a;--line:#d9d9d9;--card:#f6f6f6;--accent:#b00020;--warn:#7a4b00;--warnbg:#fff4e0}

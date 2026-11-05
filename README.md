@@ -8,8 +8,8 @@
 
 - 実装済み: 楽天検索 Adapter、複数キーワード検索（重複排除・流量制限）、数量正規化、単価・総額の比較、定番品マスタ、MCP サーバー（stdio）、CLI、公開Web（Phase 1.5）。
 - 試験: モック・フィクスチャで自動試験（`pytest`）。**実 API を使った通し確認（AC12）は手動で別途行う**。pytest からは実 API を呼ばない。
-- **ChatGPT からの実接続は未検証**（MCP サーバーはローカルの stdio で動くところまで。接続手順の確立は別課題）。
-- **楽天ウェブサービス規約への対応**: 第10条(10)「特定の人のみがアクセスできる環境での使用」に適合させるため、楽天に登録するアプリは誰でも開ける公開Webアプリ（search / compare のみ・ログイン無し）とする。CLI と MCP サーバーは同じ登録アプリの運営者用ツール。方針は [docs/SPEC.md](docs/SPEC.md) §11。公開アプリを装う方法は採らない。
+- **ChatGPT からの実接続は未検証**（公開リモートMCP `{BASE}/mcp` は in-process 試験とローカル uvicorn で確認済み。ChatGPT への登録は下の手順で腱さんが行う）。
+- **楽天ウェブサービス規約への対応**: 第10条(10)「特定の人のみがアクセスできる環境での使用」に適合させるため、楽天に登録するアプリは誰でも開ける公開Webアプリ（search / compare のみ・ログイン無し）とする。普段使い（ブラウザ・ChatGPT・Claude 等の AI）は公開アプリ（Web と `{BASE}/mcp`）に一本化し、ローカルの CLI・stdio MCP は運営者による開発・試験用（既定はモック）。定番品は利用者側（AI の記憶・指示やローカル）で持ち、サーバーには置かない。方針は [docs/SPEC.md](docs/SPEC.md) §11。公開アプリを装う方法は採らない。
 - Phase 2 以降（Yahoo!ショッピング・Amazon・ヨドバシ、横断検索）は未着手。
 
 ## セットアップ
@@ -48,6 +48,19 @@ set BASE_PATH=/kaimono
 - ヘルスチェック: `{BASE_PATH}/healthz`（API は呼ばない）。
 
 Docker（VPS 用）: `Dockerfile` と `docker-compose.prod.yml`（サービス `kaimono`、external network `internal`、ポート公開なし）。`.env` に `BASE_PATH` `PUBLIC_BASE_URL` `APP_ENV` `RAKUTEN_APPLICATION_ID` `RAKUTEN_ACCESS_KEY` を置いて `docker compose -f docker-compose.prod.yml up -d --build`。`docker build` はこの PC では未実行。
+
+## ChatGPT のチャットから使う（リモートMCP）
+
+公開Web と同じサーバーに MCP エンドポイントがある: `https://app.negura.website/kaimono/mcp`（Streamable HTTP・認証なし）。ツールは `search_products` と `compare_offers` の 2 つだけ（定番品は出さない）。流量保護は Web と共通で、結果にはクレジット（Supported by Rakuten Developers）が必ず入る。
+
+ChatGPT への登録手順（2026-11 時点。画面名は変わりうる）:
+
+1. 設定 → アプリとコネクタ → 詳細設定 → 開発者モードを ON
+2. 作成（コネクタを追加）
+3. URL に `https://app.negura.website/kaimono/mcp` を入力、認証は「なし」にして作成
+4. チャットで「楽天で○○を探して。ダブル30mで1ロールあたりの最安を比べて」と頼む
+
+Claude・Codex など他の MCP クライアントも同じ URL を登録すればよい。ローカル確認: 上の uvicorn を起動し `http://127.0.0.1:8000/kaimono/mcp` を登録する。
 
 ## 使い方（CLI）
 
