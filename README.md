@@ -47,7 +47,7 @@ set BASE_PATH=/kaimono
 - 全ページのフッターに楽天のクレジット（Supported by Rakuten Developers）と運営者の責任表示を出す。結果から出るリンクは楽天の商品ページだけ。
 - ヘルスチェック: `{BASE_PATH}/healthz`（API は呼ばない）。
 
-Docker（VPS 用）: `Dockerfile` と `docker-compose.prod.yml`（サービス `kaimono`、external network `internal`、ポート公開なし）。`.env` に `BASE_PATH` `PUBLIC_BASE_URL` `APP_ENV` `RAKUTEN_APPLICATION_ID` `RAKUTEN_ACCESS_KEY` を置いて `docker compose -f docker-compose.prod.yml up -d --build`。`docker build` はこの PC では未実行。
+Docker（VPS 用）: `Dockerfile` と `docker-compose.prod.yml`（サービス `kaimono`、external network `internal`、ポート公開なし）。VPS 上の `.env`（git 管理外・600）に `BASE_PATH=/kaimono` `PUBLIC_BASE_URL=https://app.negura.website/kaimono/`（末尾スラッシュ付き） `APP_ENV=production` `RAKUTEN_APPLICATION_ID` `RAKUTEN_ACCESS_KEY` を置く（`.env.example` は秘密ファイル保護の設定で作れないため、キー名はここを正本とする）。起動・反映は `python C:\Claude\101_KaihatsuHyoujun\vps\vps_deploy.py kaimono` 経由のみ（直の `docker compose up` はフックが遮断）。
 
 ## ChatGPT のチャットから使う（リモートMCP）
 
