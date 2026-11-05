@@ -67,3 +67,12 @@ def test_a4_the_exclusion_is_keyed_by_counter_not_a_global_word_list():
 @pytest.mark.parametrize("title", ["洗剤 500ml 12本入り 2個付き", "水 500ml 24本入り 2本おまけ", "洗剤 500ml 12個入り 3個送料無料"])
 def test_b1_a_dropped_count_smaller_than_the_total_is_also_a_disagreement(title):
     assert parse_quantity(title).confidence == "low"
+
+
+# --- 結果の caveats の常設文（SPEC §7 既知の限界・§8）-----------------------------------------
+
+def test_caveats_always_end_with_the_spec_line_and_the_quantity_reading_line():
+    from shopping import pricing
+    r = pricing.compare([], basis="個")
+    assert r.caveats[-2:] == [pricing.SPEC_CAVEAT, pricing.QUANTITY_CAVEAT]
+    assert "誤ることがあります" in pricing.QUANTITY_CAVEAT and "商品ページ" in pricing.QUANTITY_CAVEAT

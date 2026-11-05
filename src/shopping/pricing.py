@@ -11,6 +11,7 @@ from .models import Offer
 from .quantity import DISPLAY, _norm, base_unit, format_amount, parse_quantity, resolve_basis
 
 SPEC_CAVEAT = "仕様の違い（濃縮・層数・型番・色など）は判定していません。商品名で確認してください。"
+QUANTITY_CAVEAT = "数量は商品名からの読み取りで、誤ることがあります。購入前に商品ページで確認してください。"
 
 
 def unit_price_digits(x: float) -> int:
@@ -236,6 +237,7 @@ def compare(offers: list[Offer], include_terms=None, exclude_terms=None,
             caveats.append("量を読み取れない候補は必要数量の判定に使っていない")
 
     caveats.append(SPEC_CAVEAT)
+    caveats.append(QUANTITY_CAVEAT)
     return Comparison(basis=name, basis_label=label, groups=groups, unknown_offers=unknown,
                       cheapest_price=cheapest_price, cheapest_unit_price=cheapest_unit,
                       cheapest_total=cheapest_total, cheapest_for_quantity=meeting,
