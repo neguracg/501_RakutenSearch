@@ -1,0 +1,184 @@
+# @owns 公開Webの画面（HTML テンプレートと表示用の整形）。業務判断・通信は持たない
+"""外部 CSS/JS/CDN を使わない 1 カラムの画面。リンクは楽天の商品URLとクレジットだけ。"""
+from __future__ import annotations
+
+from jinja2 import DictLoader, Environment
+
+from .adapters.rakuten import is_item_url
+
+CREDIT_HTML = (
+    '<!-- Rakuten Web Services Attribution Snippet FROM HERE -->\n'
+    '<a href="https://developers.rakuten.com/" target="_blank">Supported by Rakuten Developers</a>\n'
+    '<!-- Rakuten Web Services Attribution Snippet TO HERE -->'
+)
+OPERATOR_TEXT = ("このサイトは個人開発者 negura が作成・運営しており、内容の責任は運営者にあります。"
+                 "楽天グループとは関係ありません。")
+FRESHNESS_TEXT = "価格・在庫は検索時点のもの。購入前に楽天市場の商品ページで確認してください。"
+
+_CSS = """
+:root{--bg:#fff;--fg:#1a1a1a;--muted:#5a5a5a;--line:#d9d9d9;--card:#f6f6f6;--accent:#b00020;--warn:#7a4b00;--warnbg:#fff4e0}
+@media (prefers-color-scheme:dark){:root{--bg:#161616;--fg:#eee;--muted:#aaa;--line:#3a3a3a;--card:#222;--accent:#ff8a9a;--warn:#ffd48a;--warnbg:#3a2c10}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,"Hiragino Sans","Yu Gothic UI",sans-serif}
+main,footer{max-width:42rem;margin:0 auto;padding:0 16px}
+h1{font-size:1.3rem;margin:1rem 0 .25rem}h2{font-size:1.05rem;margin:1.5rem 0 .5rem}
+.sub{color:var(--muted);font-size:.9rem;margin:0 0 1rem}
+label{display:block;font-weight:600;margin:.8rem 0 .2rem}
+textarea,input{width:100%;font:inherit;padding:.5rem;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg)}
+.row{display:flex;gap:8px}.row>div{flex:1}
+.hint{color:var(--muted);font-size:.85rem}
+.btns{display:flex;gap:8px;margin:1rem 0}
+button{flex:1;font:inherit;padding:.7rem;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg);cursor:pointer}
+button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.card{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:10px 12px;margin:.6rem 0}
+.card .name{font-weight:600;word-break:break-word}
+.card .meta{color:var(--muted);font-size:.88rem}
+.price{font-size:1.1rem;font-weight:700}
+.warn{background:var(--warnbg);color:var(--warn);border-radius:8px;padding:8px 12px;margin:.6rem 0;font-size:.92rem}
+.warn ul,.notes ul{margin:.2rem 0;padding-left:1.2rem}
+.notes{color:var(--muted);font-size:.88rem}
+.best{border-left:4px solid var(--accent)}
+details summary{cursor:pointer;font-weight:600;margin:.5rem 0}
+a{color:var(--accent)}
+footer{border-top:1px solid var(--line);margin-top:2rem;padding-top:1rem;padding-bottom:2rem;color:var(--muted);font-size:.85rem}
+footer p{margin:.4rem 0}
+"""
+
+_TEMPLATES = {
+    "base.html": """<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}買い物リサーチ{% endblock %}</title>
+<style>{{ css|safe }}</style></head>
+<body><main>
+<h1><a href="{{ base }}/" style="text-decoration:none;color:inherit">買い物リサーチ</a></h1>
+<p class="sub">楽天市場の商品を検索し、入り数・単価・送料に注意して比べます。購入操作はしません。</p>
+{% block body %}{% endblock %}
+</main>
+<footer>
+<p>{{ credit|safe }}</p>
+<p>{{ operator }}</p>
+<p>{{ freshness }}</p>
+</footer></body></html>""",
+
+    "index.html": """{% extends "base.html" %}
+{% block body %}
+<form method="get" action="{{ base }}/search">
+<label for="q">探したいもの（1〜5語）</label>
+<textarea id="q" name="q" rows="3" required placeholder="例: トイレットペーパー ダブル 12ロール">{{ form.q }}</textarea>
+<div class="hint">改行またはカンマで区切ると、語ごとに検索して統合します。</div>
+<label for="ng">除外したい語（任意）</label>
+<input id="ng" name="ng" value="{{ form.ng }}" maxlength="60">
+<div class="row">
+<div><label for="min_price">価格の下限（円）</label><input id="min_price" name="min_price" inputmode="numeric" value="{{ form.min_price }}"></div>
+<div><label for="max_price">価格の上限（円）</label><input id="max_price" name="max_price" inputmode="numeric" value="{{ form.max_price }}"></div>
+</div>
+<div class="btns">
+<button type="submit" formaction="{{ base }}/search" formmethod="get">一覧で見る</button>
+<button type="submit" class="primary" formaction="{{ base }}/compare" formmethod="get">比較する</button>
+</div>
+</form>
+<p class="hint">「比較する」は入り数を読み取って 1 ロールあたりの単価などを出します。読み取れない商品は順位付けから外し、その理由を表示します。</p>
+{% endblock %}""",
+
+    "message.html": """{% extends "base.html" %}
+{% block title %}{{ heading }} - 買い物リサーチ{% endblock %}
+{% block body %}
+<h2>{{ heading }}</h2>
+{% for p in paragraphs %}<p>{{ p }}</p>{% endfor %}
+<p><a href="{{ base }}/">検索画面に戻る</a></p>
+{% endblock %}""",
+
+    "results.html": """{% extends "base.html" %}
+{% block title %}{{ '比較' if mode == 'compare' else '検索' }}結果 - 買い物リサーチ{% endblock %}
+{% macro offer_card(o, best=False) %}
+<div class="card{% if best %} best{% endif %}">
+<div class="name">{{ o.name }}</div>
+<div><span class="price">{{ yen(o.price) }}</span>
+ <span class="meta">／ {{ ship(o) }}{% if o.total_price is not none and o.shipping_status == 'separate' %}（総額 {{ yen(o.total_price) }}）{% endif %}</span></div>
+<div class="meta">{{ o.shop_name or '店舗不明' }} ／ {{ qty(o) }} ／ {{ spec(o) }}</div>
+{% if o.review_count %}<div class="meta">レビュー {{ o.review_average }}（{{ o.review_count }}件）</div>{% endif %}
+{% if o.shipping_title_conflict %}<div class="warn">{{ o.shipping_title_conflict }}</div>{% endif %}
+<div class="meta">取得 {{ o.fetched_at or '不明' }}</div>
+{% if safe_url(o) %}<div><a href="{{ o.url }}" target="_blank" rel="noopener">楽天市場の商品ページを開く</a></div>
+{% else %}<div class="meta">商品URLの形式を確認できなかったためリンクを出していません。</div>{% endif %}
+</div>
+{% endmacro %}
+{% block body %}
+<p class="sub">検索語: {{ keywords|join(' / ') }}{% if mock %}（架空のモックデータ）{% endif %}</p>
+{% if mode == 'compare' %}
+{% if caveats %}<div class="warn"><strong>断定できない理由・注意</strong><ul>{% for c in caveats %}<li>{{ c }}</li>{% endfor %}</ul></div>{% endif %}
+<h2>最安の候補</h2>
+{% for label, o in cheapest %}
+<h3 style="font-size:.95rem;margin:.8rem 0 0">{{ label }}</h3>
+{% if o %}{{ offer_card(o, True) }}{% else %}<div class="card meta">断定できない、または該当なし（上の理由を確認してください）</div>{% endif %}
+{% endfor %}
+<h2>仕様ごとの比較（単位価格の安い順）</h2>
+{% for g in groups %}
+<details {% if loop.first %}open{% endif %}><summary>{{ g.title }}（{{ g.count }}件）</summary>
+{% for o in g.offers %}{{ offer_card(o) }}{% endfor %}
+{% if g.count > g.offers|length %}<p class="meta">ほか {{ g.count - g.offers|length }} 件は省略しています。</p>{% endif %}
+</details>
+{% else %}<p>比較できる候補がありませんでした。</p>{% endfor %}
+{% else %}
+<h2>候補 {{ offers|length }} 件</h2>
+{% for o in offers %}{{ offer_card(o) }}{% else %}<p>条件に合う商品が見つかりませんでした。</p>{% endfor %}
+{% endif %}
+<div class="notes"><h2>注意・出典</h2><ul>{% for n in notes %}<li>{{ n }}</li>{% endfor %}</ul></div>
+<p><a href="{{ base }}/">条件を変えて検索する</a></p>
+{% endblock %}""",
+}
+
+_env = Environment(loader=DictLoader(_TEMPLATES), autoescape=True)
+
+
+def _yen(v) -> str:
+    return "価格不明" if v is None else f"{v:,}円"
+
+
+def _ship(o: dict) -> str:
+    return {"included": "送料込み", "separate": "送料別", "unknown": "送料不明"}.get(
+        o.get("shipping_status"), "送料不明")
+
+
+def _qty(o: dict) -> str:
+    q = o.get("quantity") or {}
+    if q.get("confidence") == "high":
+        up = o.get("unit_price")
+        return f"{q['total']}{q['unit']}" + (f"（1{q['unit']}あたり {up:,.2f}円）" if up is not None else "")
+    return "数量不明" if q.get("confidence") == "none" else "数量要確認"
+
+
+def _spec(o: dict) -> str:
+    q = o.get("quantity") or {}
+    ply = {"double": "ダブル", "single": "シングル"}.get(q.get("ply"), "ply不明")
+    ln = f"{q['length_m']:g}m" if q.get("length_m") else "長さ不明"
+    if q.get("length_label"):
+        ln += "・倍巻き/長尺表記あり"
+    return f"{ply}／{ln}"
+
+
+def _safe_url(o: dict) -> bool:
+    return o.get("url_status") == "ok" and is_item_url(o.get("url"))
+
+
+def render(name: str, base: str, **ctx) -> str:
+    return _env.get_template(name).render(
+        base=base, css=_CSS, credit=CREDIT_HTML, operator=OPERATOR_TEXT, freshness=FRESHNESS_TEXT,
+        yen=_yen, ship=_ship, qty=_qty, spec=_spec, safe_url=_safe_url, **ctx)
+
+
+_GROUP_LABELS = {"x": "倍巻き", "multi": "倍巻き（倍率不明）", "long": "ロング・長尺"}
+
+
+def group_title(g: dict) -> str:
+    ply = {"double": "ダブル", "single": "シングル"}.get(g.get("ply"), "シングル/ダブル不明")
+    ln = f"{g['length_m']:g}m" if g.get("length_m") else "長さ不明"
+    label = g.get("length_label")
+    extra = ""
+    if label:
+        if label.startswith("x"):
+            extra = f"／{label[1:]}倍巻き"
+        else:
+            extra = "／" + _GROUP_LABELS.get(label, label)
+    return f"{ply}／{ln}{extra}"

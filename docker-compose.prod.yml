@@ -1,0 +1,21 @@
+# 買い物リサーチ（公開Web）本番 Compose。アプリのコンテナ 1 つだけ（postgres・cloudflared は VPS 共有インフラ）。
+# ホストのポートは公開しない（VPS 側の override で足す）。DB・ボリューム無し（価格・在庫は保存しない）。
+services:
+  kaimono:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kaimono
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - BASE_PATH=${BASE_PATH:-/kaimono}
+      - TZ=${TZ:-Asia/Tokyo}
+    networks:
+      - internal
+
+networks:
+  internal:
+    external: true
+    name: internal

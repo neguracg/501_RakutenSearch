@@ -105,7 +105,7 @@ def _search(keywords, adapter, *, pages, hits, limits, sleep, filters):
     if isinstance(kws, dict):
         return kws
     adapter = adapter if adapter is not None else make_adapter()
-    mock = isinstance(adapter, MockAdapter)
+    mock = isinstance(adapter, MockAdapter) or bool(getattr(adapter, "is_mock", False))
     if sleep is None:
         sleep = (lambda s: None) if mock else time.sleep
     try:
