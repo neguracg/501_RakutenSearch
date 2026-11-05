@@ -33,3 +33,4 @@
 - 2026-11-05 WP3-3: service/MCP/CLI/Web/regulars/mock_data/README/docs を新インターフェース(include_terms・exclude_terms・basis・cheapest_for_quantity)へ、required_spec・unit・ply系を廃止、coreにply/倍巻き/length_label/ロール既定なし(COUNTERS表とプロンプト例のみ)、DECISIONSの個人例も一般例へ / pytest 480 passed（ブラインド 150/150）
 - 2026-11-05 WP3-4: verifier 初回レビュー指摘 B1〜B5・C3〜C9 を修正（公開入力検査を guard.Gate.admit→inputs.validate に一本化、isascii+isdecimal、CLI/stdio MCP 既定モック、GET /mcp 405、healthz 503、requirements 分離と httpx2 直接 import 廃止、HANDOFF/SPEC AC-W1〜W11/README 更新）、BUGLOG 6行 / pytest 598 passed（ブラインド 150/150）。uvicorn 実起動(SHOPPING_MOCK=1・BASE_PATH=/kaimono)で Web 比較4カテゴリ200・/mcp compare_offers・GET /mcp 405・healthz 200 を確認し停止
 - 2026-11-05 WP4-0: 数量読み取り強化(S1〜S11)のブラインドを追記(既存150件は不変) / 209件
+- 2026-11-05 WP4-0b: W1〜W5 確定(×無し2段・count_unit正規名・小数点境界・l/L/ℓ casefold)をブラインドに固定、弱い形を確定形へ / 220件

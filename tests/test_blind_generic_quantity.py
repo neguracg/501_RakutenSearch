@@ -1048,14 +1048,14 @@ S4_CASES = [
     ("トイレットペーパー 12ロール×4P", 48, "ロール"),
     ("ティッシュ 5箱×12P", 60, "箱"),
     ("単3電池 8本入×3P", 24, "本"),
-    ("ボールペン 2pcs", 2, _UNSET),
-    ("ボールペン 3pc", 3, _UNSET),
-    ("ティッシュ 12P", 12, _UNSET),
-    ("鉛筆 2ダース", 24, _UNSET),  # ダース=12倍
-    ("鉛筆 1ダース", 12, _UNSET),
+    ("ボールペン 2pcs", 2, "個"),
+    ("ボールペン 3pc", 3, "個"),
+    ("ティッシュ 12P", 12, "パック"),
+    ("鉛筆 2ダース", 24, "個"),  # ダース=12倍
+    ("鉛筆 1ダース", 12, "個"),
     ("ノート 5冊", 5, "冊"),
     ("靴下 3ペア", 3, "ペア"),
-    ("ケーキ 6ヶ", 6, "ヶ"),
+    ("ケーキ 6ヶ", 6, "個"),
     ("ギフト 5点", 5, "点"),
 ]
 
@@ -1083,16 +1083,21 @@ def test_s4_unknown_counter_in_count_position_is_low(text):
     assert q.count_total is None and q.measure_total is None
 
 
-def test_s4_copy_paper_and_pencil_are_never_silently_wrong():
-    # W1: 一意な期待値が決まらない実例。片方の数だけを high で返すことだけ禁止する
-    q = _parse("コピー用紙 500枚 5冊")
-    assert _conf(q) in ("high", "low")
-    if _conf(q) == "high":
-        assert q.count_total != 500
-    q = _parse("鉛筆 12本入り 2ダース")
-    assert _conf(q) in ("high", "low")
-    if _conf(q) == "high":
-        assert q.count_total in (24, 288)
+@pytest.mark.parametrize(
+    "text,count,cunit",
+    [
+        # W1 確定: ×の無い2段の数え語「N<a>(入り) M<b>」は N×M、count_unit は内側
+        ("コピー用紙 500枚 5冊", 2500, "枚"),  # 500*5
+        ("単3電池 4本入 3パック", 12, "本"),  # 4*3
+        ("鉛筆 12本入り 2ダース", 24, "本"),  # 内側の個数があるとき、ダースは袋数と同じ扱い 12*2
+        ("鉛筆 2ダース", 24, "個"),  # 単独のダースは12倍。内側の語が無いので「個」
+    ],
+)
+def test_w1_two_stage_counters_without_times_sign(text, count, cunit):
+    q = _parse(text)
+    assert _conf(q) == "high", text
+    assert q.count_total == count
+    assert q.count_unit == cunit
 
 
 # --- S5 明示 basis は複数次元の中からその次元を使う --------------------------------
@@ -1234,3 +1239,47 @@ def test_s11_units_have_no_duplicate_keys_after_nfkc():
 
     normalized = [unicodedata.normalize("NFKC", k) for k in quantity.UNITS]
     assert len(set(normalized)) == len(normalized)
+
+
+# --- WP4-0b: W5 小数点・W2 補足・ℓ/l/L の確定 --------------------------------------
+
+
+def test_w5_digit_ending_term_does_not_match_before_decimal_point():
+    # W5: 「2」は「2.5L」の先頭に一致しない（数字で始まる語は直前、数字で終わる語は直後の
+    # 数字・小数点を見る）。2L は直後が L なので一致、1.2L は直前が小数点なので不一致
+    a = "水 2.5L×4本"
+    b = "水 2L×4本"
+    c = "水 1.2L×4本"
+    r = _compare([_offer(a, 1000), _offer(b, 900), _offer(c, 800)], include_terms=["2"])
+    assert _all_names(r) == {b}
+    r2 = _compare([_offer(a, 1000), _offer(b, 900), _offer(c, 800)], exclude_terms=["2"])
+    assert _all_names(r2) == {a, c}
+
+
+@pytest.mark.parametrize(
+    "text,amount",
+    [
+        ("商品 2L", 2000),
+        ("商品 2l", 2000),
+        ("商品 2ℓ", 2000),
+        ("商品 1.5l", 1500),
+        ("商品 500ML", 500),
+        ("商品 1.5KG", 1500),
+    ],
+)
+def test_units_are_matched_after_casefold_l_L_and_script_l(text, amount):
+    # 補足: 単位の照合は NFKC+casefold 後。l・L・ℓ はすべてリットル（体積 → ml）
+    q = _parse(text)
+    assert q.content_dimension in ("volume", "mass")
+    assert q.content_unit in ("ml", "g")
+    assert q.content_amount == pytest.approx(amount)
+
+
+def test_units_have_no_duplicate_keys_after_nfkc_casefold():
+    import unicodedata
+
+    from shopping import quantity
+
+    keys = [unicodedata.normalize("NFKC", k).casefold() for k in quantity.UNITS]
+    dup = {k for k in keys if keys.count(k) > 1}
+    assert not dup, dup
