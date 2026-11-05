@@ -1,0 +1,40 @@
+--- /c/Users/MNTNS_~1/AppData/Local/Temp/claude/C--Claude-501-RakutenSearch/0997c036-4b4e-493b-82b2-0106a4480df0/scratchpad/ver/base71/src/shopping/quantity.py	2026-11-05 15:04:54.000000000 +0900
++++ /c/Users/MNTNS_~1/AppData/Local/Temp/claude/C--Claude-501-RakutenSearch/0997c036-4b4e-493b-82b2-0106a4480df0/scratchpad/ver/work_fixexp/src/shopping/quantity.py	2026-11-05 15:48:45.288884100 +0900
+@@ -305,7 +305,7 @@
+     return False
+ 
+ 
+-def _joins(s: str, p: _Tok, t: _Tok, group_measures: list[_Tok]) -> bool:
++def _joins(s: str, p: _Tok, t: _Tok, group_measures: list[_Tok], group=None) -> bool:
+     gap = s[p.end:t.start]
+     if t.kind == "bare":
+         return bool(_GAP_X.fullmatch(gap))
+@@ -321,10 +321,19 @@
+             return True
+         if not _GAP_PLAIN.fullmatch(gap):
+             return False
++        if group is not None and group.factors:
++            prod = 1
++            only = len(group.factors) == 1
++            for f in group.factors:
++                prod *= int(f.n) * (f.mult if only else 1)
++            if t.n == prod:
++                return False
+         if "入" in gap or t.word in CONTAINERS:
+             return True
+         # ×の無い2段の数え語「500枚 5冊」「12本入り 2ダース」（W1）。先頭が 1 の「1箱 24本」は
+         # 1 個あたりの説明なので連結しない。同じ数え語の言い直し（12本 12本入り）も連結しない
++        if group is not None and len(group.factors) > 1:
++            return False
+         return p.n != 1 and (p.word != t.word or t.mult > 1)
+     return bool(_GAP_X.fullmatch(gap) or _GAP_PLAIN.fullmatch(gap))
+ 
+@@ -332,7 +341,7 @@
+ def _group(s: str, toks: list[_Tok]) -> list[_Group]:
+     groups: list[_Group] = []
+     for t in toks:
+-        if groups and _joins(s, groups[-1].toks[-1], t, groups[-1].measures):
++        if groups and _joins(s, groups[-1].toks[-1], t, groups[-1].measures, groups[-1]):
+             groups[-1].toks.append(t)
+         elif t.kind != "bare":      # 直前に何も無い「×6」は個数にしない
+             groups.append(_Group([t]))
