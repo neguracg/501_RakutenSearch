@@ -68,23 +68,23 @@ def test_admit_validates_before_counting_the_ip_budget_or_touching_the_adapter()
     for _ in range(10):
         with pytest.raises(InvalidInput):
             g.admit("203.0.113.1", keywords=["a"] * 6)
-    g.admit("203.0.113.1", **OK)
-    g.admit("203.0.113.1", **OK)
+    g.admit("203.0.113.1", **OK, pages=1)
+    g.admit("203.0.113.1", **OK, pages=1)
     with pytest.raises(RateLimited):
-        g.admit("203.0.113.1", **OK)
+        g.admit("203.0.113.1", **OK, pages=1)
     assert ad.calls == [] and g.adapter.api_calls == 0
 
 
 def test_admit_and_check_share_one_budget():
     g, _ = gate(limit=2)
     g.check("203.0.113.2")
-    g.admit("203.0.113.2", **OK)
+    g.admit("203.0.113.2", **OK, pages=1)
     with pytest.raises(RateLimited):
         g.check("203.0.113.2")
 
 
-# --- pages（公開 MCP で pages を効かせる。2026-11-06） ---
-# pages 省略（None）＝全件。整数は 1〜100（楽天 IchibaItem Search の page 上限）
+# --- pages・start_page（2026-11-06 #931: 既定 3 ページ＋範囲指定で何件でも） ---
+# pages 省略（None）＝既定の 3。整数は 1〜100（楽天 IchibaItem Search の page 上限）。start_page も 1〜100
 @pytest.mark.parametrize("pages", [None, 1, 2, 3, 4, 50, 100])
 def test_pages_none_or_1_to_100_pass(pages):
     validate(**OK, pages=pages)
@@ -95,6 +95,29 @@ def test_pages_none_or_1_to_100_pass(pages):
 def test_pages_out_of_range_or_non_int_is_invalid(pages):
     with pytest.raises(InvalidInput, match="pages"):
         validate(**OK, pages=pages)
+
+
+def test_check_pages_and_start_page_return_the_resolved_values():
+    assert inputs.DEFAULT_PAGES == 3
+    assert inputs.check_pages(None) == 3 and inputs.check_pages(7) == 7
+    assert inputs.check_start_page(None) == 1 and inputs.check_start_page(4) == 4
+
+
+@pytest.mark.parametrize("start,pages", [(None, None), (1, 100), (4, 10), (98, 3), (100, 1), (50, 51), (1, None)])
+def test_start_page_range_within_rakuten_ceiling_passes(start, pages):
+    validate(**OK, start_page=start, pages=pages)
+
+
+@pytest.mark.parametrize("start", [0, 101, -1, 1.5, "2", True, False])
+def test_start_page_out_of_range_or_non_int_is_invalid(start):
+    with pytest.raises(InvalidInput, match="start_page"):
+        validate(**OK, start_page=start)
+
+
+@pytest.mark.parametrize("start,pages", [(99, 3), (100, 2), (98, 4), (51, 51), (2, 100)])
+def test_start_page_plus_pages_over_100_is_invalid_and_says_the_rakuten_ceiling(start, pages):
+    with pytest.raises(InvalidInput, match="100 ページ目までしか返しません"):
+        validate(**OK, start_page=start, pages=pages)
 
 
 @pytest.mark.parametrize("n,pages", [(5, 100), (5, None), (4, 3), (5, 2)])
@@ -125,10 +148,22 @@ def test_rate_limiter_weight_larger_than_limit_is_clamped_so_one_call_can_pass()
         lim.hit("ip", 1)
 
 
-def test_admit_charges_pages_and_default_is_one():
-    gate = Gate(FakeAdapter({}), RateLimiter(limit=4, window=60, clock=lambda: 0.0))
-    gate.admit("ip", **OK)                             # pages 省略（全件・Web）= 1 回分（取得前は枚数が分からない）
-    gate.admit("ip", **OK, pages=None)                 # 明示 None も 1 回分（計 2）
-    gate.admit("ip", **OK, pages=2)                    # 計 4
+def test_admit_charges_pages_and_default_is_three():
+    gate = Gate(FakeAdapter({}), RateLimiter(limit=10, window=60, clock=lambda: 0.0))
+    gate.admit("ip", **OK)                             # pages 省略 = 既定の 3 回分
+    gate.admit("ip", **OK, pages=None)                 # 明示 None も 3 回分（計 6）
+    gate.admit("ip", **OK, pages=4)                    # 計 10
     with pytest.raises(RateLimited):
-        gate.admit("ip", **OK)
+        gate.admit("ip", **OK, pages=1)
+
+
+def test_admit_start_page_does_not_change_the_weight_but_range_is_checked_first():
+    gate = Gate(FakeAdapter({}), RateLimiter(limit=3, window=60, clock=lambda: 0.0))
+    gate.admit("ip", **OK, start_page=50, pages=2)     # 重みは pages=2
+    for _ in range(5):
+        with pytest.raises(InvalidInput):
+            gate.admit("ip", **OK, start_page=99, pages=3)   # 範囲外は回数を消費しない
+    gate.admit("ip", **OK, pages=1)                    # 2+1=3 でちょうど満杯
+    with pytest.raises(RateLimited):
+        gate.admit("ip", **OK, pages=1)
+

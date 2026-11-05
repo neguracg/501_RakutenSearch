@@ -14,7 +14,7 @@ from .adapters.rakuten import RakutenAdapter
 from .config import RakutenCredentials, load_credentials
 from .models import Offer, SearchStats
 from .orchestrator import Limits, search_many
-from .inputs import InvalidInput, check_basis, check_desired_quantity
+from .inputs import (DEFAULT_PAGES, MAX_PAGES, InvalidInput, check_basis, check_desired_quantity)
 from .pricing import Comparison, compare, filter_by_terms, round_unit_price, total_price
 from .quantity import parse_quantity
 from .regulars import Regular, RegularsError, get_regular
@@ -103,7 +103,7 @@ def _validate_keywords(keywords) -> list[str] | dict:
     return [k.strip() for k in keywords]
 
 
-def _search(keywords, adapter, *, pages, hits, limits, sleep, filters):
+def _search(keywords, adapter, *, pages, start_page, hits, limits, sleep, filters):
     """(offers, stats, mock) または エラー dict。"""
     kws = _validate_keywords(keywords)
     if isinstance(kws, dict):
@@ -113,7 +113,7 @@ def _search(keywords, adapter, *, pages, hits, limits, sleep, filters):
     if sleep is None:
         sleep = (lambda s: None) if mock else time.sleep
     try:
-        offers, stats = search_many(adapter, kws, max_pages=pages, hits=hits,
+        offers, stats = search_many(adapter, kws, max_pages=pages, start_page=start_page, hits=hits,
                                     limits=limits or Limits(), sleep=sleep, **filters)
     except ValueError as exc:  # 上限超え・不正値（メッセージは自前の文言のみ）
         return _error("invalid_request", str(exc))
@@ -155,8 +155,8 @@ def _annotate(offers: list[Offer]) -> None:
         o.quantity = parse_quantity(o.item_name)
 
 
-def _base_notes(offers: list[Offer], stats: SearchStats, mock: bool,
-                *, shipping_conflict: bool = True) -> list[str]:
+def _base_notes(offers: list[Offer], stats: SearchStats, mock: bool, hits: int,
+                *, shipping_conflict: bool = True, paging_notes: bool = True) -> list[str]:
     notes = [_FRESHNESS_NOTE, f"出典: {SOURCE}"]
     if mock:
         notes.insert(0, _MOCK_NOTE)
@@ -172,30 +172,55 @@ def _base_notes(offers: list[Offer], stats: SearchStats, mock: bool,
         notes.append("一部の検索でエラー: " + " / ".join(errs))
     if stats.stopped_reason == "rate_limited":
         notes.append("楽天APIの流量制限(429)で残りの検索を打ち切った。時間をおいて再実行すること。")
+    if paging_notes:                  # 続きの取り方は MCP・CLI 向け。Web 画面は 1 ページ固定なので出さない
+        notes.extend(_paging_notes(stats, hits))
+    return notes
+
+
+def _paging_notes(stats: SearchStats, hits: int) -> list[str]:
+    """全量と取得範囲、続きの取り方（語ごと）。利用者に全量と取得範囲を伝えるための材料。"""
+    notes: list[str] = []
+    if stats.stopped_reason == "time_limit":
+        notes.append("時間の上限で途中まで。取れた分だけ返した。続きは下記の start_page で呼ぶこと。")
+    more = [s for s in stats.per_keyword if s.next_page is not None]
+    for s in more:
+        if s.pages_fetched:
+            rest = f"（残り約 {s.remaining} 件）" if s.remaining is not None else ""
+            notes.append(f"「{s.keyword}」はヒット {s.api_count} 件のうち {s.start_page}〜{s.last_page} ページ目の "
+                         f"{s.received} 件を取得{rest}。続きは start_page={s.next_page} で呼ぶ。")
+        else:
+            notes.append(f"「{s.keyword}」は未取得。start_page={s.next_page} で呼ぶ。")
+    if len(more) and len(stats.per_keyword) > 1:
+        notes.append("続きを取る時は、続きが要る語だけを keywords に指定すること（他の語は同じページを取り直してしまう）。")
+    ceiling = MAX_PAGES * hits
+    over = [s for s in stats.per_keyword if s.api_count is not None and s.api_count > ceiling]
+    for s in over:
+        notes.append(f"「{s.keyword}」はヒット {s.api_count} 件だが、楽天が返すのは {MAX_PAGES} ページ目"
+                     f"（先頭 {ceiling} 件）まで。絞り込み（語・価格・ng_keyword）で件数を減らすこと。")
     return notes
 
 
 def search_products(keywords, *, ng_keyword: str | None = None, min_price: int | None = None,
-                    max_price: int | None = None, sort: str = "standard", pages: int | None = None,
-                    hits: int = 30, max_results: int | None = None,      # hits 30 は楽天の上限（1 ページ最大）
+                    max_price: int | None = None, sort: str = "standard", pages: int | None = DEFAULT_PAGES,
+                    start_page: int = 1, hits: int = 30, max_results: int | None = None,      # hits 30 は楽天の上限（1 ページ最大）
                     include_terms=None, exclude_terms=None,
                     adapter: MarketplaceAdapter | None = None, sleep=None,
-                    limits: Limits | None = None) -> dict:
+                    limits: Limits | None = None, paging_notes: bool = True) -> dict:
     inc = _terms_arg(include_terms, "include_terms")
     exc = _terms_arg(exclude_terms, "exclude_terms")
     for v in (inc, exc):
         if isinstance(v, dict):
             return v
     filters = dict(ng_keyword=ng_keyword, min_price=min_price, max_price=max_price, sort=sort)
-    r = _search(keywords, adapter, pages=pages, hits=hits, limits=limits, sleep=sleep,
-                filters=filters)
+    r = _search(keywords, adapter, pages=pages, start_page=start_page, hits=hits, limits=limits,
+                sleep=sleep, filters=filters)
     if isinstance(r, dict):
         return r
     offers, stats, mock = r
     _annotate(offers)
     kept, term_notes = filter_by_terms(offers, inc, exc)     # 比較（compare）と同じ絞り込み（S9）
     shown = kept if max_results is None else kept[:max(0, max_results)]   # None は全件（切り詰めは利用者が max_results を指定した時だけ）
-    notes = _base_notes(kept, stats, mock) + term_notes
+    notes = _base_notes(kept, stats, mock, hits, paging_notes=paging_notes) + term_notes
     if len(shown) < len(kept):
         notes.append(f"候補 {len(kept)} 件のうち先頭 {len(shown)} 件だけ返した（max_results）。")
     return {"ok": True, "source": SOURCE, "mock": mock, "keywords": _validate_keywords(keywords),
@@ -241,8 +266,8 @@ def _terms_arg(value, name: str) -> list[str] | None | dict:
 
 
 def _compare_flow(keywords, include_terms, exclude_terms, desired_quantity, basis, *, adapter,
-                  pages, hits, limits, sleep, filters, known_urls=None,
-                  group_offers_max: int | None = None) -> dict:
+                  pages, start_page, hits, limits, sleep, filters, known_urls=None,
+                  group_offers_max: int | None = None, paging_notes: bool = True) -> dict:
     inc = _terms_arg(include_terms, "include_terms")
     exc = _terms_arg(exclude_terms, "exclude_terms")
     for v in (inc, exc):
@@ -255,8 +280,8 @@ def _compare_flow(keywords, include_terms, exclude_terms, desired_quantity, basi
         check_desired_quantity(desired_quantity)
     except InvalidInput as exc:
         return _error("invalid_request", str(exc))
-    r = _search(keywords, adapter, pages=pages, hits=hits, limits=limits, sleep=sleep,
-                filters=filters)
+    r = _search(keywords, adapter, pages=pages, start_page=start_page, hits=hits, limits=limits,
+                sleep=sleep, filters=filters)
     if isinstance(r, dict):
         return r
     offers, stats, mock = r
@@ -266,7 +291,8 @@ def _compare_flow(keywords, include_terms, exclude_terms, desired_quantity, basi
     conflict = _shipping_conflict_note(offers)
     if conflict:
         comparison.caveats.append(conflict)
-    notes = _base_notes(offers, stats, mock, shipping_conflict=False) + comparison.notes
+    notes = _base_notes(offers, stats, mock, hits, shipping_conflict=False,
+                         paging_notes=paging_notes) + comparison.notes
     return {"ok": True, "source": SOURCE, "mock": mock, "keywords": _validate_keywords(keywords),
             "include_terms": inc, "exclude_terms": exc, "desired_quantity": desired_quantity,
             "basis": comparison.basis, "stats": _stats_to_dict(stats),
@@ -277,13 +303,15 @@ def _compare_flow(keywords, include_terms, exclude_terms, desired_quantity, basi
 def compare_offers(keywords, include_terms=None, exclude_terms=None, desired_quantity=None,
                    basis: str | None = None, *, ng_keyword: str | None = None,
                    min_price: int | None = None, max_price: int | None = None,
-                   sort: str = "standard", pages: int | None = None, hits: int = 30,
-                   adapter: MarketplaceAdapter | None = None, sleep=None,
-                   limits: Limits | None = None, group_offers_max: int | None = None) -> dict:
+                   sort: str = "standard", pages: int | None = DEFAULT_PAGES, start_page: int = 1,
+                   hits: int = 30, adapter: MarketplaceAdapter | None = None, sleep=None,
+                   limits: Limits | None = None, group_offers_max: int | None = None,
+                   paging_notes: bool = True) -> dict:
     filters = dict(ng_keyword=ng_keyword, min_price=min_price, max_price=max_price, sort=sort)
     return _compare_flow(keywords, include_terms, exclude_terms, desired_quantity, basis,
-                         adapter=adapter, pages=pages, hits=hits, limits=limits, sleep=sleep,
-                         filters=filters, group_offers_max=group_offers_max)
+                         adapter=adapter, pages=pages, start_page=start_page, hits=hits, limits=limits,
+                         sleep=sleep, filters=filters, group_offers_max=group_offers_max,
+                         paging_notes=paging_notes)
 
 
 def _regular_info(r: Regular) -> dict:
@@ -302,7 +330,8 @@ _REGULARS_MESSAGES = {
 }
 
 
-def find_regular_item(regular_id: str, *, regulars_path=None, pages: int | None = None, hits: int = 30,
+def find_regular_item(regular_id: str, *, regulars_path=None, pages: int | None = DEFAULT_PAGES,
+                      start_page: int = 1, hits: int = 30,
                       adapter: MarketplaceAdapter | None = None, sleep=None,
                       limits: Limits | None = None) -> dict:
     if not isinstance(regular_id, str) or not regular_id.strip():
@@ -315,7 +344,8 @@ def find_regular_item(regular_id: str, *, regulars_path=None, pages: int | None 
             msg += f"（{exc.detail}）"
         return _error(f"regulars_{exc.kind}", msg)
     out = _compare_flow(reg.keywords, reg.include_terms or None, reg.exclude_terms or None,
-                        reg.desired_quantity, reg.basis, adapter=adapter, pages=pages, hits=hits, limits=limits,
+                        reg.desired_quantity, reg.basis, adapter=adapter, pages=pages, start_page=start_page,
+                        hits=hits, limits=limits,
                         sleep=sleep, filters={}, known_urls=reg.known_urls)
     out["regular"] = _regular_info(reg)
     return out

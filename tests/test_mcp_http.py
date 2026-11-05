@@ -181,10 +181,11 @@ def test_find_regular_item_is_not_callable_on_public_endpoint():
 
 def test_mcp_shares_the_same_rate_limit_and_cache_as_web():
     app, ad = make_app("/kaimono", limit=2)
+    one = {"keywords": ["洗濯洗剤"], "pages": 1}                # 1 回=1 回分で数える（既定の pages は 3 で重み 3）
     with TestClient(app) as tc:
-        outs = [data(rpc(tc, "/kaimono", "search_products", {"keywords": ["洗濯洗剤"]}, ip="203.0.113.7"))
+        outs = [data(rpc(tc, "/kaimono", "search_products", one, ip="203.0.113.7"))
                 for _ in range(3)]
-        other = data(rpc(tc, "/kaimono", "search_products", {"keywords": ["洗濯洗剤"]}, ip="203.0.113.8"))
+        other = data(rpc(tc, "/kaimono", "search_products", one, ip="203.0.113.8"))
     assert [o["ok"] for o in outs] == [True, True, False]
     assert outs[2]["error"]["kind"] == "rate_limited"
     assert outs[2]["credit"] == CREDIT_TEXT                  # エラーでもクレジットは付く
@@ -264,26 +265,91 @@ def test_public_pages_3_fetches_pages_1_2_3_and_returns_all_90_without_max_resul
     assert (st["api_count"], st["received"], st["pages_fetched"], st["truncated"]) == (90, 90, 3, False)
 
 
-def test_public_pages_omitted_fetches_all_144_hits_in_5_pages():
+def _hits_144():
     pg = many_pages(pages_n=5, total=144)
     pg[("洗濯洗剤", 5)] = (pg[("洗濯洗剤", 5)][0][:24], 144)           # 最終ページは端数 24 件（30×4+24=144）
-    app, ad = make_app("", adapter=FakeAdapter(pg))
+    return pg
+
+
+def test_public_default_is_3_pages_90_hits_with_total_144_and_next_page_4():
+    app, ad = make_app("", adapter=FakeAdapter(_hits_144()))
     with TestClient(app) as tc:
         d = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"]}))
-    assert [kw["page"] for _, kw in ad.calls] == [1, 2, 3, 4, 5]
-    assert d["returned"] == 144 and len(d["offers"]) == 144
+    assert [kw["page"] for _, kw in ad.calls] == [1, 2, 3]
+    assert d["returned"] == 90 and len(d["offers"]) == 90
     st = d["stats"]["per_keyword"][0]
-    assert (st["api_count"], st["received"], st["pages_fetched"], st["truncated"]) == (144, 144, 5, False)
+    assert (st["api_count"], st["received"], st["pages_fetched"], st["truncated"]) == (144, 90, 3, True)
+    assert (st["start_page"], st["last_page"], st["next_page"], st["remaining"]) == (1, 3, 4, 54)
     assert isinstance(d["stats"]["elapsed_sec"], float)
+    assert any("start_page=4" in n and "144" in n for n in d["notes"])
 
 
-def test_public_pages_omitted_stops_at_rakuten_100_page_ceiling_and_is_truncated():
+def test_public_start_page_4_pages_2_returns_the_remaining_54_hits():
+    app, ad = make_app("", adapter=FakeAdapter(_hits_144()))
+    with TestClient(app) as tc:
+        d = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"], "start_page": 4, "pages": 2}))
+    assert [kw["page"] for _, kw in ad.calls] == [4, 5]
+    assert d["returned"] == 54
+    st = d["stats"]["per_keyword"][0]
+    assert (st["api_count"], st["start_page"], st["last_page"], st["next_page"], st["truncated"]) == (144, 4, 5, None, False)
+
+
+def test_public_start_page_follows_next_page_to_collect_everything():
+    app, _ = make_app("", adapter=FakeAdapter(_hits_144()))
+    got, start = set(), 1
+    with TestClient(app) as tc:
+        while start:
+            d = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"], "start_page": start}))
+            codes = {o["item_code"] for o in d["offers"]}
+            assert not (codes & got)
+            got |= codes
+            start = d["stats"]["per_keyword"][0]["next_page"]
+    assert len(got) == 144
+
+
+def test_public_pages_100_reaches_the_rakuten_ceiling_and_has_no_next_page():
     app, ad = make_app("", adapter=FakeAdapter(many_pages(pages_n=101, total=5000)))
     with TestClient(app) as tc:
-        d = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"]}))
+        d = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"], "pages": 100}))
     assert len(ad.calls) == 100 and d["returned"] == 3000
     st = d["stats"]["per_keyword"][0]
-    assert (st["api_count"], st["pages_fetched"], st["truncated"]) == (5000, 100, True)
+    assert (st["api_count"], st["pages_fetched"], st["next_page"], st["truncated"]) == (5000, 100, None, False)
+    assert any("3000" in n for n in d["notes"])
+
+
+@pytest.mark.parametrize("tool", ["search_products", "compare_offers"])
+@pytest.mark.parametrize("start,pages", [(99, 3), (100, 2), (101, 1), (0, 1), (1, 101)])
+def test_public_start_page_range_over_100_is_invalid_request_and_costs_nothing(tool, start, pages):
+    app, ad = make_app("", limit=2)
+    with TestClient(app) as tc:
+        for _ in range(4):
+            d = data(rpc(tc, "", tool, {"keywords": ["洗濯洗剤"], "start_page": start, "pages": pages}, ip="203.0.113.71"))
+            assert d["ok"] is False and d["error"]["kind"] == "invalid_request"
+    assert ad.calls == []
+    if (start, pages) == (99, 3):
+        assert "100 ページ目までしか返しません" in d["error"]["message"]
+
+
+def test_public_compare_offers_start_page_and_default_three_pages():
+    app, ad = make_app("", adapter=FakeAdapter(_hits_144()))
+    with TestClient(app) as tc:
+        d = data(rpc(tc, "", "compare_offers", {"keywords": ["洗濯洗剤"], "basis": "g"}))
+        d2 = data(rpc(tc, "", "compare_offers", {"keywords": ["洗濯洗剤"], "basis": "g", "start_page": 4}))
+    assert d["stats"]["per_keyword"][0]["next_page"] == 4 and d["stats"]["per_keyword"][0]["pages_fetched"] == 3
+    assert d2["stats"]["per_keyword"][0]["last_page"] == 5 and d2["stats"]["per_keyword"][0]["next_page"] is None
+    assert [kw["page"] for _, kw in ad.calls] == [1, 2, 3, 4, 5]
+
+
+def test_public_tool_schemas_expose_start_page_and_default_pages_3():
+    app, _ = make_app("")
+    with TestClient(app) as tc:
+        r = tc.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}, headers=RPC_HEADERS)
+    tools = {t["name"]: t for t in r.json()["result"]["tools"]}
+    for name in ("search_products", "compare_offers"):
+        props = tools[name]["inputSchema"]["properties"]
+        assert props["start_page"]["default"] == 1 and props["pages"]["default"] == 3
+        d = tools[name]["description"]
+        assert "start_page" in d and "api_count" in d and "3000" in d and "next_page" in d
 
 
 def test_public_explicit_pages_1_stops_there_and_shows_truncated_when_more_hits_remain():
@@ -336,16 +402,18 @@ def test_public_no_keywords_times_pages_limit(keywords, pages_n):
     assert len(ad.calls) == len(keywords)                      # 空の応答なので各語 1 ページ目で止まる
 
 
-def test_public_rate_limit_counts_explicit_pages_as_weight_and_omitted_as_one():
+def test_public_rate_limit_counts_pages_as_weight_and_omitted_as_the_default_three():
     # 20 回/分の窓で pages=3 は 3 回分: 6 回通って 7 回目（合計 21 回分）が弾かれる
     app, _ = make_app("", adapter=FakeAdapter(many_pages()), limit=20)
     with TestClient(app) as tc:
         outs = [data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"], "pages": 3}, ip="203.0.113.80"))
                 for _ in range(7)]
-        single = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"]}, ip="203.0.113.80"))  # 省略=1 回分
+        one = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"], "pages": 1}, ip="203.0.113.80"))
+        omitted = data(rpc(tc, "", "search_products", {"keywords": ["洗濯洗剤"]}, ip="203.0.113.80"))  # 省略=3 回分
     assert [o["ok"] for o in outs] == [True] * 6 + [False]
     assert outs[6]["error"]["kind"] == "rate_limited"
-    assert single["ok"] is True                                # 18 回分使用済み・残り 2 回分で省略(1 回分)は通る
+    assert one["ok"] is True                                   # 18 回分使用済み・残り 2 回分で pages=1(1 回分)は通る
+    assert omitted["error"]["kind"] == "rate_limited"          # 19 回分使用済み・残り 1 回分では、省略(3 回分)は通らない
 
 
 def test_pages_weight_is_clamped_to_the_limit_so_a_single_call_can_always_pass():

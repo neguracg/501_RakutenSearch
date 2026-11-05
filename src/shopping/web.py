@@ -144,7 +144,7 @@ def create_app(base_path: str | None = None, gate: Gate | None = None) -> FastAP
         try:
             gate.admit(_client_ip(request), keywords=keywords, ng_keyword=ng_word or None,
                        min_price=lo, max_price=hi, include_terms=inc, exclude_terms=exc_terms,
-                       basis=basis_arg)
+                       basis=basis_arg, pages=PAGES)
         except InvalidInput as exc:
             return _message(request, 400, "入力を確認してください", str(exc))
         except RateLimited as exc:
@@ -152,7 +152,8 @@ def create_app(base_path: str | None = None, gate: Gate | None = None) -> FastAP
                             "短い時間にたくさんの検索がありました。しばらくしてからもう一度お試しください。",
                             headers={"Retry-After": str(exc.retry_after)})
         common = dict(ng_keyword=ng_word or None, min_price=lo, max_price=hi, pages=PAGES, hits=HITS,
-                      adapter=gate.adapter, sleep=lambda s: None, limits=Limits(min_interval_sec=0))
+                      adapter=gate.adapter, sleep=lambda s: None, limits=Limits(min_interval_sec=0),
+                      paging_notes=False)
         if mode == "compare":
             result = service.compare_offers(keywords, inc, exc_terms, None, basis_arg,
                                             group_offers_max=WEB_GROUP_OFFERS_MAX, **common)

@@ -1,7 +1,7 @@
 # @owns コマンドライン入口（引数解釈と人間向け表示だけ。処理は service に委譲）
 """買い物リサーチ CLI。
 
-  python cli.py search "kw1" "kw2" [--include 語 ...] [--exclude 語 ...] [--min-price N] [--max-price N] [--ng 語] [--pages N] [--mock] [--json]
+  python cli.py search "kw1" "kw2" [--include 語 ...] [--exclude 語 ...] [--min-price N] [--max-price N] [--ng 語] [--pages N] [--start-page N] [--mock] [--json]
   python cli.py compare "kw1" ... [--include 語 ...] [--exclude 語 ...] [--basis 個|ml|g|m|W|...] [--desired-quantity N] [...]
   python cli.py regular <id> [--regulars PATH] [--mock] [--json]
 
@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from shopping import service  # noqa: E402
+from shopping.inputs import DEFAULT_PAGES, MAX_HITS, MAX_PAGES  # noqa: E402
 from shopping.pricing import format_unit_price  # noqa: E402
 from shopping.quantity import format_amount  # noqa: E402
 
@@ -31,9 +32,16 @@ def _add_search_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--include", nargs="+", metavar="語", help="商品名に全て含む語（例: 詰め替え 単3）")
     p.add_argument("--exclude", nargs="+", metavar="語", help="商品名に含んだら外す語")
     p.add_argument("--sort", default="standard")
-    p.add_argument("--pages", type=int, default=None,
-                   help="語ごとのページ数（1〜100。省略＝ヒットした全件。楽天の上限は 100 ページ=3000 件/語）")
+    _add_paging_args(p)
     _add_common(p)
+
+
+def _add_paging_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--pages", type=int, default=DEFAULT_PAGES,
+                   help=f"語ごとに取るページ数（1〜{MAX_PAGES}。既定 {DEFAULT_PAGES}＝{DEFAULT_PAGES * MAX_HITS} 件。1 ページ約 1 秒）")
+    p.add_argument("--start-page", type=int, default=1, dest="start_page",
+                   help=f"取り始めるページ（1〜{MAX_PAGES}。既定 1。続きは表示される『続き』のページ番号を指定）。"
+                        f"楽天は {MAX_PAGES} ページ目（3000 件）までしか返さない")
 
 
 def _add_common(p: argparse.ArgumentParser) -> None:
@@ -56,7 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("regular", help="定番品マスタの id で今の最安を調べる")
     r.add_argument("regular_id")
     r.add_argument("--regulars", help="定番品マスタのパス（既定 data/regulars.json）")
-    r.add_argument("--pages", type=int, default=None, help="語ごとのページ数（省略＝全件）")
+    _add_paging_args(r)
     _add_common(r)
     return ap
 
@@ -94,7 +102,11 @@ def _print_stats(stats: dict) -> None:
           + (f" / 打ち切り: {stats['stopped_reason']}" if stats.get("stopped_reason") else ""))
     for k in stats["per_keyword"]:
         err = f" エラー={k['error']}" if k["error"] else ""
-        print(f"  - {k['keyword']}: API件数 {k['api_count']} / 取得 {k['received']}{err}")
+        span = f"（{k['start_page']}〜{k['last_page']}ページ目）" if k.get("last_page") else ""
+        more = (f" / 続き: --start-page {k['next_page']}（残り約 {k['remaining']} 件）"
+                if k.get("next_page") and k.get("remaining") is not None
+                else f" / 続き: --start-page {k['next_page']}" if k.get("next_page") else "")
+        print(f"  - {k['keyword']}: API件数 {k['api_count']} / 取得 {k['received']}{span}{err}{more}")
 
 
 def _print_notes(result: dict) -> None:
@@ -146,7 +158,7 @@ def run(argv: list[str] | None = None) -> int:
     if args.command == "search":
         result = service.search_products(
             args.keywords, ng_keyword=args.ng_keyword, min_price=args.min_price,
-            max_price=args.max_price, sort=args.sort, pages=args.pages,
+            max_price=args.max_price, sort=args.sort, pages=args.pages, start_page=args.start_page,
             max_results=args.max_results, include_terms=args.include, exclude_terms=args.exclude,
             adapter=adapter)
         render = render_search
@@ -154,11 +166,12 @@ def run(argv: list[str] | None = None) -> int:
         result = service.compare_offers(
             args.keywords, args.include, args.exclude, args.desired_quantity, args.basis,
             ng_keyword=args.ng_keyword, min_price=args.min_price, max_price=args.max_price,
-            sort=args.sort, pages=args.pages, adapter=adapter)
+            sort=args.sort, pages=args.pages, start_page=args.start_page, adapter=adapter)
         render = render_compare
     else:
         result = service.find_regular_item(args.regular_id, regulars_path=args.regulars,
-                                           pages=args.pages, adapter=adapter)
+                                           pages=args.pages, start_page=args.start_page,
+                                           adapter=adapter)
         render = render_compare
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))

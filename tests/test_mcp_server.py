@@ -117,3 +117,19 @@ def test_stdio_subprocess_serves_mock_without_credentials():
     r = asyncio.run(asyncio.wait_for(go(), timeout=60))
     data = r.structured_content or json.loads(r.content[0].text)
     assert data["ok"] and data["mock"] is True and data["returned"] > 0
+
+
+def test_stdio_tools_accept_start_page_and_default_pages_3():
+    async def go():
+        async with Client(build_server()) as c:
+            return {t.name: t for t in (await c.list_tools()).tools}
+    by = asyncio.run(asyncio.wait_for(go(), timeout=30))
+    for name in ("search_products", "compare_offers", "find_regular_item"):
+        props = by[name].input_schema["properties"]
+        assert props["start_page"]["default"] == 1 and props["pages"]["default"] == 3
+    r = call("search_products", {"keywords": ["洗濯洗剤"], "start_page": 99, "pages": 3})
+    d = r.structured_content
+    assert d["ok"] is False and d["error"]["kind"] == "invalid_request"
+    r = call("search_products", {"keywords": ["洗濯洗剤"], "start_page": 1, "pages": 1})
+    st = r.structured_content["stats"]["per_keyword"][0]
+    assert st["start_page"] == 1 and "next_page" in st and "remaining" in st

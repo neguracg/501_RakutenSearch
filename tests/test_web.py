@@ -145,6 +145,18 @@ def test_search_fixed_pages_and_hits():
     assert ad.calls and all(kw.get("page") == 1 and kw.get("hits") == 30 for _, kw in ad.calls)
 
 
+def test_web_screen_has_no_paging_notes_and_charges_one_per_search():
+    pages = {("洗濯洗剤", 1): ([make_offer(f"x{i}", f"洗濯洗剤 {i} 900g", 1000 + i, shipping_status="included")
+                              for i in range(30)], 500)}
+    clock = Clock()
+    lim = RateLimiter(limit=3, clock=clock)
+    c, _, _ = make_client("", adapter=fake(pages), limiter=lim)
+    for path in ("/search", "/compare", "/search"):                # Web は 1 回=1 回分（MCP の既定 pages=3 とは別）
+        r = c.get(path + "?q=洗濯洗剤")
+        assert r.status_code == 200 and "start_page" not in r.text and "続きは" not in r.text
+    assert c.get("/search?q=洗濯洗剤").status_code == 429
+
+
 def test_web_compare_screen_still_shows_only_10_per_group():
     pages = {("洗濯洗剤", 1): ([make_offer(f"x{i}", f"洗濯洗剤 {i} 900g", 1000 + i, shipping_status="included")
                               for i in range(25)], 25)}

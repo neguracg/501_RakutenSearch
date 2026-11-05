@@ -74,7 +74,11 @@ class KeywordStat:
     received: int = 0
     error: str | None = None
     pages_fetched: int = 0      # 実際に取得できたページ数
-    truncated: bool = False     # ヒットが残っているのに、楽天の 100 ページ天井または明示した pages で止めた
+    start_page: int = 1         # 取り始めたページ（呼び出しの start_page）
+    last_page: int | None = None    # 取得できた最後のページ（1 ページも取れなければ None）
+    next_page: int | None = None    # 続きがあれば次のページ番号。無い・楽天の 100 ページ天井に達した・エラーの時は None
+    remaining: int | None = None    # api_count のうち、100 ページ天井以内でまだ取っていない件数（目安）。件数が分からなければ None
+    truncated: bool = False     # next_page があること（範囲・時間の上限で、取れるはずの続きを残して止めた）
 
 
 @dataclass
@@ -86,3 +90,4 @@ class SearchStats:
     fetched_at: str | None = None
     stopped_reason: str | None = None
     elapsed_sec: float | None = None    # 取得にかかった秒（小数 1 桁）
+    # stopped_reason: rate_limited（楽天 429）/ time_limit（1 回の取得の時間の上限で途中まで）

@@ -56,20 +56,57 @@ def test_limit_error_returns_1(capsys):
     assert "invalid_request" in capsys.readouterr().err
 
 
-def test_cli_defaults_are_all_hits_no_pages_no_max_results():
+def test_cli_defaults_are_3_pages_start_1_no_max_results():
     ap = cli.build_parser()
     a = ap.parse_args(["search", "x"])
-    assert a.pages is None and a.max_results is None
-    assert ap.parse_args(["compare", "x"]).pages is None
-    assert ap.parse_args(["regular", "r"]).pages is None
-    assert ap.parse_args(["search", "x", "--pages", "2", "--max-results", "5"]).pages == 2
+    assert a.pages == 3 and a.start_page == 1 and a.max_results is None
+    for cmd, extra in (("compare", ["x"]), ("regular", ["r"])):
+        b = ap.parse_args([cmd] + extra)
+        assert b.pages == 3 and b.start_page == 1
+    c = ap.parse_args(["search", "x", "--pages", "2", "--start-page", "4", "--max-results", "5"])
+    assert (c.pages, c.start_page) == (2, 4)
 
 
-def test_cli_search_default_returns_every_hit(capsys):
+def test_cli_search_default_returns_every_hit_in_the_mock(capsys):
     assert cli.run(["search", "洗濯洗剤", "--mock", "--json"]) == 0
     d = json.loads(capsys.readouterr().out)
     st = d["stats"]["per_keyword"][0]
-    assert d["returned"] == st["received"] == st["api_count"] and not st["truncated"]
+    assert d["returned"] == st["received"] == st["api_count"] and not st["truncated"] and st["next_page"] is None
+
+
+def _many_mock(tmp_path, n=100):
+    items = [{"itemName": f"テスト商品 {i} 100g", "itemCode": f"shop:i{i}", "itemPrice": 1000 + i,
+              "itemUrl": f"https://item.rakuten.co.jp/shop/i{i}/", "shopName": "S", "availability": 1,
+              "postageFlag": 0} for i in range(n)]
+    p = tmp_path / "mock.json"
+    p.write_text(json.dumps({"Items": items}, ensure_ascii=False), encoding="utf-8")
+    return p
+
+
+def test_cli_start_page_works_for_search_and_compare_and_prints_next(tmp_path, capsys, monkeypatch):
+    from shopping.adapters.mock import MockAdapter
+    path = _many_mock(tmp_path, 100)
+    monkeypatch.setattr("shopping.service.make_adapter", lambda *a, **k: MockAdapter(data_path=path))
+    assert cli.run(["search", "テスト商品", "--json", "--pages", "1", "--max-results", "0"]) == 0
+    d = json.loads(capsys.readouterr().out)
+    st = d["stats"]["per_keyword"][0]
+    assert (st["api_count"], st["received"], st["next_page"], st["remaining"]) == (100, 30, 2, 70)
+    assert cli.run(["search", "テスト商品", "--json", "--start-page", "2", "--pages", "2"]) == 0
+    d = json.loads(capsys.readouterr().out)
+    st = d["stats"]["per_keyword"][0]
+    assert (st["start_page"], st["last_page"], st["received"], st["next_page"]) == (2, 3, 60, 4)
+    assert cli.run(["compare", "テスト商品", "--json", "--start-page", "4"]) == 0
+    d = json.loads(capsys.readouterr().out)
+    st = d["stats"]["per_keyword"][0]
+    assert (st["start_page"], st["received"], st["next_page"]) == (4, 10, None)
+    assert cli.run(["search", "テスト商品", "--start-page", "2", "--pages", "1"]) == 0     # 人間向け表示に続きが出る
+    out = capsys.readouterr().out
+    assert "2〜2ページ目" in out and "--start-page 3" in out and "残り約 40 件" in out
+
+
+def test_cli_start_page_range_over_100_is_invalid(capsys):
+    assert cli.run(["search", "洗濯洗剤", "--mock", "--start-page", "99", "--pages", "3"]) == 1
+    assert "invalid_request" in capsys.readouterr().err
 
 
 def test_cli_pages_101_is_invalid(capsys):

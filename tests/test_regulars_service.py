@@ -323,21 +323,104 @@ def _hits_table(total, per_page=30, keyword="a", upto=None):
             for p in range(1, upto + 1)}
 
 
-def test_search_products_pages_omitted_returns_all_144_hits():
+def test_search_products_default_is_3_pages_90_hits_and_tells_the_total_and_next_page():
     ad = FakeAdapter(_hits_table(144))
     r = service.search_products(["a"], adapter=ad, sleep=lambda s: None)
     st = r["stats"]["per_keyword"][0]
-    assert r["returned"] == 144 and len(ad.calls) == 5
-    assert (st["api_count"], st["received"], st["pages_fetched"], st["truncated"]) == (144, 144, 5, False)
+    assert r["returned"] == 90 and [kw["page"] for _, kw in ad.calls] == [1, 2, 3]
+    assert (st["api_count"], st["received"], st["pages_fetched"]) == (144, 90, 3)
+    assert (st["start_page"], st["last_page"], st["next_page"], st["remaining"], st["truncated"]) == (1, 3, 4, 54, True)
     assert isinstance(r["stats"]["elapsed_sec"], float)
+    note = next(n for n in r["notes"] if "start_page=4" in n)
+    assert "144" in note and "1〜3" in note and "54" in note
 
 
-def test_search_products_pages_omitted_stops_at_100_pages_and_says_truncated():
-    ad = FakeAdapter(_hits_table(5000, upto=101))
-    r = service.search_products(["a"], adapter=ad, sleep=lambda s: None)
+def test_search_products_start_page_4_pages_2_gets_the_rest_up_to_the_144th_hit():
+    ad = FakeAdapter(_hits_table(144))
+    r = service.search_products(["a"], adapter=ad, sleep=lambda s: None, start_page=4, pages=2)
     st = r["stats"]["per_keyword"][0]
-    assert len(ad.calls) == 100 and r["returned"] == 3000
-    assert (st["pages_fetched"], st["truncated"]) == (100, True)
+    assert [kw["page"] for _, kw in ad.calls] == [4, 5] and r["returned"] == 54
+    assert (st["api_count"], st["start_page"], st["last_page"], st["next_page"], st["remaining"],
+            st["truncated"]) == (144, 4, 5, None, 0, False)
+    assert not any("start_page=" in n for n in r["notes"])
+
+
+def test_search_products_pages_none_means_the_default_3():
+    ad = FakeAdapter(_hits_table(144))
+    r = service.search_products(["a"], adapter=ad, sleep=lambda s: None, pages=None)
+    assert r["returned"] == 90
+
+
+@pytest.mark.parametrize("kw", [dict(start_page=99, pages=3), dict(start_page=101), dict(start_page=0),
+                                dict(pages=0), dict(start_page=100, pages=2)])
+def test_search_products_and_compare_offers_reject_out_of_range_and_say_the_ceiling(kw):
+    for fn in (service.search_products, service.compare_offers):
+        ad = FakeAdapter(_hits_table(144))
+        r = fn(["a"], adapter=ad, sleep=lambda s: None, **kw)
+        assert r["ok"] is False and r["error"]["kind"] == "invalid_request" and ad.calls == []
+    r = service.search_products(["a"], adapter=FakeAdapter({}), start_page=99, pages=3)
+    assert "100 ページ目までしか返しません" in r["error"]["message"]
+
+
+def test_search_products_over_3000_hits_notes_the_rakuten_ceiling():
+    ad = FakeAdapter(_hits_table(5000, upto=101))
+    r = service.search_products(["a"], adapter=ad, sleep=lambda s: None, start_page=98, pages=3)
+    st = r["stats"]["per_keyword"][0]
+    assert (st["api_count"], st["next_page"], st["remaining"], st["truncated"]) == (5000, None, 0, False)
+    assert any("5000" in n and "3000" in n for n in r["notes"])
+
+
+def test_paging_notes_time_limit_message_and_multi_keyword_hint():
+    pages = {**_hits_table(144, keyword="a"), **_hits_table(144, keyword="b")}
+    r = service.search_products(["a", "b"], adapter=FakeAdapter(pages), sleep=lambda s: None)
+    assert sum("start_page=4" in n for n in r["notes"]) == 2
+    assert any("続きが要る語だけ" in n for n in r["notes"])
+
+
+def test_search_products_time_limit_returns_partial_with_next_page_and_note(monkeypatch):
+    from shopping.orchestrator import Limits
+    t = [0.0]
+
+    class Slow(FakeAdapter):
+        def search(self, keyword, **kw):
+            t[0] += 1.0
+            return super().search(keyword, **kw)
+    monkeypatch.setattr("shopping.orchestrator.time.monotonic", lambda: t[0])
+    ad = Slow(_hits_table(3000))
+    r = service.search_products(["a"], adapter=ad, sleep=lambda s: None, pages=100,
+                                limits=Limits(time_budget_sec=10.0))
+    st = r["stats"]["per_keyword"][0]
+    assert r["ok"] and r["stats"]["stopped_reason"] == "time_limit" and len(ad.calls) == 10
+    assert st["next_page"] == 11 and st["truncated"] is True and r["returned"] == 300
+    assert any("時間の上限で途中まで" in n for n in r["notes"]) and any("start_page=11" in n for n in r["notes"])
+
+
+def test_compare_offers_start_page_and_default_paging():
+    ad = FakeAdapter(_hits_table(144))
+    r = service.compare_offers(["a"], adapter=ad, sleep=lambda s: None)
+    st = r["stats"]["per_keyword"][0]
+    assert [kw["page"] for _, kw in ad.calls] == [1, 2, 3] and st["next_page"] == 4 and st["api_count"] == 144
+    assert any("start_page=4" in n for n in r["notes"])
+    ad = FakeAdapter(_hits_table(144))
+    r = service.compare_offers(["a"], adapter=ad, sleep=lambda s: None, start_page=4, pages=2)
+    assert [kw["page"] for _, kw in ad.calls] == [4, 5] and r["stats"]["per_keyword"][0]["next_page"] is None
+    assert r["comparison"]["groups"][0]["count"] == 54
+
+
+def test_paging_notes_can_be_turned_off_for_the_web_screen():
+    ad = FakeAdapter(_hits_table(144))
+    r = service.search_products(["a"], adapter=ad, sleep=lambda s: None, pages=1, paging_notes=False)
+    assert not any("start_page" in n for n in r["notes"])
+    r = service.compare_offers(["a"], adapter=FakeAdapter(_hits_table(144)), sleep=lambda s: None, pages=1,
+                               paging_notes=False)
+    assert not any("start_page" in n for n in r["notes"])
+
+
+def test_find_regular_item_passes_start_page(tmp_path):
+    reg = write(tmp_path, [{"id": "r1", "name": "洗剤", "keywords": ["a"], "include_terms": [], "exclude_terms": []}])
+    ad = FakeAdapter(_hits_table(144))
+    r = service.find_regular_item("r1", regulars_path=reg, adapter=ad, sleep=lambda s: None, start_page=4, pages=2)
+    assert r["ok"] and [kw["page"] for _, kw in ad.calls] == [4, 5]
 
 
 def test_compare_offers_does_not_cut_groups_by_default_but_group_offers_max_cuts():

@@ -62,8 +62,8 @@ item_url（商品固有 URL）, fetched_at（ISO8601・JST）, quantity（§7）
 ## 6. 検索オーケストレーション
 
 - 複数キーワードを順に検索し、itemCode で重複排除。どのキーワードで見つかったかは matched_keywords に残す。
-- 流量: リクエスト間隔 1 秒以上（楽天の 1 秒 1 リクエスト）。検索語は 5 個まで。ページ数は省略（None）＝**ヒットした全件**（`page*hits >= api_count` で止まる。楽天の上限 page≤100・hits≤30 ＝ 1 語あたり最大 3000 件）。整数を指定した時は 1〜100 でその枚数まで。出典の無い上限（語数×ページ数など）は置かない。上限越え（pages 0・101 など）は拒否。
-- 統計: キーワードごとの hit 件数（API の count）・取得件数・取得ページ数・エラー・`truncated`（ヒットが残っているのに、楽天の 100 ページ天井または明示した pages で止めた時だけ true）、全体の取得件数・重複除去件数・候補件数・取得日時・打ち切り理由・`elapsed_sec`（取得にかかった秒・小数 1 桁。次に上限を置くかを決める実測用）。
+- 流量: リクエスト間隔 1 秒以上（楽天の 1 秒 1 リクエスト）。検索語は 5 個まで。語ごとに取るページは `start_page`（既定 1）〜`start_page+pages-1`、`pages` の既定は **3**（90 件）。`start_page`・`pages` は 1〜100 の整数で、`start_page+pages-1` ≤ 100（楽天の上限 page≤100・hits≤30 ＝ 1 語あたり最大 3000 件）。超えたら `invalid_request`（「楽天は 100 ページ目までしか返さない」）・API 呼び出し 0 回。語数×ページ数の上限は置かない（出典が無い）。ヒットが尽きたら早く止める（`page*hits >= api_count`）。1 回の呼び出しの取得が **80 秒**（出典: Cloudflare の既定プロキシ読み取りタイムアウト 100 秒＝524 に、応答生成の余裕 20 秒）を超えそうなら、そこで止めて取れた分を返す（`stats.stopped_reason=time_limit`・`next_page` と notes「時間の上限で途中まで」。未着手の語は `next_page`=start_page）。
+- 統計: キーワードごとの hit 件数＝全量（API の count、`api_count`）・取得件数・取得ページ数・エラー・`start_page`・`last_page`（取得した最後のページ）・`next_page`（続きがあれば次のページ番号。無い・楽天の 100 ページ天井に達した・エラーの時は null）・`remaining`（`api_count` のうち 100 ページ天井以内で未取得の件数の目安）・`truncated`（`next_page` がある時だけ true）、全体の取得件数・重複除去件数・候補件数・取得日時・打ち切り理由（`rate_limited` / `time_limit`）・`elapsed_sec`（取得にかかった秒・小数 1 桁）。MCP・CLI の notes には、ヒット全量・取得範囲・続きの取り方（`start_page=N`）を語ごとに書く（Web 画面には出さない）。
 - ChatGPT へは整形済みの必要項目だけ返す（生レスポンスを渡さない）。
 
 ## 7. 数量の読み取り（quantity.py）
@@ -238,7 +238,7 @@ S1〜S11・W1〜W5 との整理（矛盾箇所の注記）:
 - `compare_offers(keywords, include_terms=None, exclude_terms=None, desired_quantity=None, basis=None, ng_keyword, min_price, max_price, sort, pages)`（pages 省略＝全件）。`required_spec` と `unit="ロール"` 既定は廃止（§8）。結果の各候補に `quantity`（§7 の項目）と `unit_price`・`unit_price_label`、`comparison` に §8 Q1 のキー（`basis` `basis_label` `groups` `unknown_offers` `cheapest_*` `caveats` `notes`）。
 - INSTRUCTIONS・ツール説明は特定カテゴリを前提にしない。「include_terms に仕様（例: 『詰め替え』『ダブル』『単3』）を入れる」「仕様差の判定は AI 側の責任」を明記し、例は3カテゴリ以上。
 - **stdio MCP と CLI の既定はモック**（架空データ。API を呼ばない）。実 API は CLI の `--live`、stdio MCP の環境変数 `SHOPPING_LIVE=1` を明示した時だけ（§11）。`SHOPPING_MOCK=1` / `--mock` は互換のため残す（明示のモックは常に勝つ）。公開Web は実 API が既定（鍵が無ければ起動しても `/healthz` が 503）。
-- 公開リモートMCP: `{BASE}/mcp`（Streamable HTTP・stateless・JSON 応答・認証なし）。ツールは `search_products` と `compare_offers` の 2 つだけ（`find_regular_item` は出さない）。流量保護（直列化・キャッシュ・IP別回数制限）は Web と共通（guard.py）。`pages`（語ごとに取るページ数）は**省略＝ヒットした全件**（楽天の上限 1 語あたり 100 ページ = 3000 件まで）で、整数を指定する時は 1〜100（範囲外は `invalid_request`・API 呼び出し 0 回）。検索語の数×ページ数の上限は置かない（出典が無いため。API は 1 秒 1 回直列）。IP 別回数制限は、明示した pages はその値、省略は 1 回分として数える（取得前に枚数が分からないため。Web は 1 回分）。`search_products` の `max_results` 既定は未指定＝取得した全件で、指定した時だけ切り詰めて notes に出す。`compare_offers` の `groups[].offers`・`unknown_offers` も件数で切らず全件返す（Web 画面だけ従来どおり各 10 件表示）。語ごとの取得状況は `stats.per_keyword[]` の `api_count`（楽天のヒット数）・`received`（取得件数）・`pages_fetched`（取得ページ数）・`truncated`（ヒットが残っているのに楽天の 100 ページ天井または明示 pages で止めた時だけ true）、全体の `stats.elapsed_sec`（取得にかかった秒）。`GET {BASE}/mcp`（と DELETE）は 405（`Allow: POST`。stateless・JSON 応答のため SSE ストリームを開かない）。
+- 公開リモートMCP: `{BASE}/mcp`（Streamable HTTP・stateless・JSON 応答・認証なし）。ツールは `search_products` と `compare_offers` の 2 つだけ（`find_regular_item` は出さない）。流量保護（直列化・キャッシュ・IP別回数制限）は Web と共通（guard.py）。`pages`（語ごとに取るページ数・**既定 3**）と `start_page`（取り始めるページ・既定 1）で範囲を指定でき、検査は §6（1〜100、`start_page+pages-1` ≤ 100、範囲外は `invalid_request`・API 呼び出し 0 回）。既定は語ごとに 3 ページ（90 件）で、**ヒットの全量は `stats.per_keyword[].api_count`**。続きは `next_page` を `start_page` に指定して呼ぶ（pages を増やせば一度に多く取れる。1 ページ約 1 秒）。ツール説明文と INSTRUCTIONS で、利用者に全量と取得範囲を伝えるよう指示する。IP 別回数制限の重みは `pages`（明示値、省略は既定の 3。Web は 1 回分）。`search_products` の `max_results` 既定は未指定＝取得した全件で、指定した時だけ切り詰めて notes に出す。`compare_offers` の `groups[].offers`・`unknown_offers` も件数で切らず全件返す（Web 画面だけ従来どおり各 10 件表示）。語ごとの取得状況は `stats.per_keyword[]` の `api_count`・`received`・`pages_fetched`・`start_page`・`last_page`・`next_page`・`remaining`・`truncated`（§6 統計）、全体の `stats.elapsed_sec`・`stats.stopped_reason`。`GET {BASE}/mcp`（と DELETE）は 405（`Allow: POST`。stateless・JSON 応答のため SSE ストリームを開かない）。
 - 公開面の入力検査（guard.Gate.admit → inputs.validate。Web と MCP が同じ関数を通る）: 検索語・含む語・除く語・楽天側の除外語はそれぞれ 1〜5 語（除外語は空白区切り）、1 語の長さは楽天の上限（半角128文字）を安全側に解釈し UTF-8 で 128 バイト以内（利用者向けの文言は「全角42文字（半角128文字）」。S8。判定は Gate とアダプタが同じ `inputs.fits_limit`）、価格は 0〜10,000,000 の整数、`sort` は楽天公式の値（standard / ±affiliateRate / ±reviewCount / ±reviewAverage / ±itemPrice / ±updateTimestamp）、`basis` は換算表の別名か「個」、`desired_quantity` は有限の正数。ロック取得・最小間隔のスリープ・API 呼び出しより前に検査し、弾いた入力は API 枠も IP 別回数も消費しない。MCP は不正入力を `invalid_request` のエラー結果（クレジット付き）で返す。入力値そのものはメッセージに入れない。
 - ChatGPT（Plus）からの実接続は未検証（登録手順は README）。
 
@@ -257,7 +257,7 @@ S1〜S11・W1〜W5 との整理（矛盾箇所の注記）:
 - 規約から来る画面の義務と公開面の入力検査・ヘルスチェックは AC-W1〜W11（§12）に列挙する。全ページのフッターに、楽天のクレジット（公式テキスト版・無改変）・運営者の責任表示・価格在庫の注意を出す。
 - 結果画面から出す外部リンクは楽天の商品URLだけ（クレジットのリンクを除く）。
 - 他社商品との併記は出典明示で可（楽天 FAQ）。価格・在庫のキャッシュは 24 時間以内。公開Webのメモリキャッシュは最大 10 分。
-- 公開面の流量保護（Web と MCP は共通の guard 層を通す）: 楽天 API 呼び出しはプロセス全体で 1 秒 1 回に直列化、同条件は最大 10 分キャッシュ、IP 別に回数制限（既定 20 回/分）。Web は pages=1・hits=30 固定。MCP は pages 省略＝全件（楽天の 100 ページ天井まで。明示は 1〜100）・hits=30（回数制限は明示 pages 回分、省略は 1 回分）。
+- 公開面の流量保護（Web と MCP は共通の guard 層を通す）: 楽天 API 呼び出しはプロセス全体で 1 秒 1 回に直列化、同条件は最大 10 分キャッシュ、IP 別に回数制限（既定 20 回/分）。Web は pages=1・hits=30 固定（回数制限の重み 1）。MCP は pages 既定 3・start_page 既定 1・hits=30（回数制限の重みは pages＝明示値または既定の 3。1 回の重みは上限 20 に丸める）。
 - Cookie・ログイン・アクセス解析・個人情報の保存は無し。
 
 ## 12. 受入条件（Phase 1）

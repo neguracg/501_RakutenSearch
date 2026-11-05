@@ -166,8 +166,7 @@ class Gate:
         """公開面（Web と MCP）の入口。先に入力を検査し（不正なら inputs.InvalidInput）、通ったものだけ回数を数える。
         ロック取得・最小間隔のスリープ・API 呼び出しより前に置くので、弾いた入力は API 枠を消費しない。"""
         inputs.validate(**fields)
-        pages = fields.get("pages")
-        self.check(ip, 1 if pages is None else pages)    # 省略（全件）は取得前に枚数が分からないので 1 回分。楽天側は直列化で守られる
+        self.check(ip, inputs.check_pages(fields.get("pages")))    # 重み＝取得ページ数（省略は既定の 3）。楽天側は直列化で守られる
 
 
 def _env_int(name: str, default: int) -> int:

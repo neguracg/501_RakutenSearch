@@ -16,8 +16,9 @@ MAX_BYTES = 128                  # 出典: 楽天 keyword の上限（半角 128
 MAX_PRICE = 10_000_000
 MAX_QUANTITY = 1e12
 # 楽天 IchibaItem Search の仕様（出典: 楽天ウェブサービス API 仕様 page は 1〜100、hits は 1〜30）。
-# 1 語あたり最大 100 ページ × 30 件 = 3000 件。これ以外の上限は置かない（pages 省略＝この天井まで全件）
+# 1 語あたり最大 100 ページ × 30 件 = 3000 件。これ以外の上限は置かない（語数×ページ数の上限も置かない）
 MAX_PAGES = 100
+DEFAULT_PAGES = 3                # 腱さんの決定（2026-11-06 #931）: 既定は語ごと 3 ページ（90 件）。続きは start_page で取る
 MAX_HITS = 30
 # 楽天 IchibaItem Search の sort（公式の値）
 SORTS = frozenset({"standard", "+affiliateRate", "-affiliateRate", "+reviewCount", "-reviewCount",
@@ -67,22 +68,40 @@ def _price(value, label: str) -> None:
         raise InvalidInput(f"{label}は 0〜{MAX_PRICE:,} の整数で指定してください。")
 
 
-def check_pages(pages) -> int | None:
-    """語ごとに取るページ数の検査。None＝省略＝全件（楽天の上限 MAX_PAGES ページまで）、
-    指定する時は int の 1〜MAX_PAGES。不正なら InvalidInput。"""
+def check_pages(pages) -> int:
+    """語ごとに取るページ数の検査。None＝省略＝DEFAULT_PAGES、指定する時は int の 1〜MAX_PAGES。
+    検査後の値を返す。不正なら InvalidInput。"""
     if pages is None:
-        return None
+        return DEFAULT_PAGES
     if isinstance(pages, bool) or not isinstance(pages, int) or not 1 <= pages <= MAX_PAGES:
-        raise InvalidInput(f"pages は 1〜{MAX_PAGES} の整数で指定してください（省略すると全件）。")
+        raise InvalidInput(f"pages は 1〜{MAX_PAGES} の整数で指定してください（省略すると {DEFAULT_PAGES} ページ）。")
     return pages
+
+
+def check_start_page(start_page) -> int:
+    """取り始めるページ番号の検査。None＝省略＝1、指定する時は int の 1〜MAX_PAGES。検査後の値を返す。"""
+    if start_page is None:
+        return 1
+    if isinstance(start_page, bool) or not isinstance(start_page, int) or not 1 <= start_page <= MAX_PAGES:
+        raise InvalidInput(f"start_page は 1〜{MAX_PAGES} の整数で指定してください（省略すると 1）。")
+    return start_page
+
+
+def check_page_range(start_page, pages) -> tuple[int, int]:
+    """start_page〜start_page+pages-1 が楽天の天井（MAX_PAGES ページ目）に収まるか。(start_page, pages) を返す。"""
+    s, n = check_start_page(start_page), check_pages(pages)
+    if s + n - 1 > MAX_PAGES:
+        raise InvalidInput(f"楽天は {MAX_PAGES} ページ目までしか返しません。start_page + pages - 1 が "
+                           f"{MAX_PAGES} 以下になるように指定してください（最大で {MAX_PAGES - s + 1} ページ）。")
+    return s, n
 
 
 def validate(*, keywords, ng_keyword=None, min_price=None, max_price=None, sort="standard",
              include_terms=None, exclude_terms=None, basis=None, desired_quantity=None,
-             pages=None) -> None:
+             pages=None, start_page=None) -> None:
     """不正なら InvalidInput。正規化後の値は返さない（service が自分で正規化する）。"""
     kws = _terms(keywords, "検索語", allow_empty=False)
-    check_pages(pages)
+    check_page_range(start_page, pages)
     _terms(include_terms, "含む語", allow_empty=True)
     _terms(exclude_terms, "除く語", allow_empty=True)
     if ng_keyword is not None:

@@ -183,7 +183,7 @@ def test_keyword_stat_error_is_not_truncated_and_counts_only_fetched_pages():
     assert s.error == "timeout" and s.pages_fetched == 1 and s.truncated is False
 
 
-# --- pages 省略（max_pages=None）＝全件（楽天の 100 ページ天井まで） ---
+# --- pages 省略＝既定 3 ページ・start_page で範囲指定（2026-11-06 #931） ---
 def _pages_of(total, keyword="a", per_page=30, upto=None):
     """total 件ヒットする語の表。page ごとに別商品を per_page 件（最終ページは端数）。"""
     upto = upto or -(-total // per_page)
@@ -194,37 +194,154 @@ def _pages_of(total, keyword="a", per_page=30, upto=None):
     return table
 
 
-def test_max_pages_none_fetches_everything_until_hits_run_out():
-    ad, offers, stats, _ = run(_pages_of(144), ["a"], max_pages=None)
+def _pages_called(ad):
+    return [kw["page"] for _, kw in ad.calls]
+
+
+def test_default_is_3_pages_90_hits_with_next_page_4_and_remaining_54():
+    ad, offers, stats, _ = run(_pages_of(144), ["a"])                 # max_pages 省略
     s = stats.per_keyword[0]
-    assert len(offers) == 144 and [kw["page"] for _, kw in ad.calls] == [1, 2, 3, 4, 5]
-    assert (s.api_count, s.received, s.pages_fetched, s.truncated) == (144, 144, 5, False)
+    assert len(offers) == 90 and _pages_called(ad) == [1, 2, 3]
+    assert (s.api_count, s.received, s.pages_fetched) == (144, 90, 3)
+    assert (s.start_page, s.last_page, s.next_page, s.remaining, s.truncated) == (1, 3, 4, 54, True)
+    assert run(_pages_of(144), ["a"], max_pages=None)[2].per_keyword[0].next_page == 4   # None も既定の 3
 
 
-def test_max_pages_none_default_is_all():
-    ad, offers, _, _ = run(_pages_of(61), ["a"])                      # 引数省略も全件
-    assert len(offers) == 61 and len(ad.calls) == 3
-
-
-def test_max_pages_none_stops_at_rakuten_ceiling_100_and_is_truncated():
-    ad, offers, stats, _ = run(_pages_of(5000, upto=101), ["a"], max_pages=None)
+def test_start_page_4_pages_2_fetches_pages_4_and_5_up_to_the_144th_hit():
+    ad, offers, stats, _ = run(_pages_of(144), ["a"], start_page=4, max_pages=2)
     s = stats.per_keyword[0]
-    assert len(ad.calls) == 100 and len(offers) == 3000              # 100 ページ × 30 件
-    assert (s.api_count, s.received, s.pages_fetched, s.truncated) == (5000, 3000, 100, True)
+    assert _pages_called(ad) == [4, 5] and len(offers) == 54          # 31〜120 は取らず、121〜144 の 24 件と 91〜120 の 30 件
+    assert (s.api_count, s.received, s.pages_fetched) == (144, 54, 2)
+    assert (s.start_page, s.last_page, s.next_page, s.remaining, s.truncated) == (4, 5, None, 0, False)
 
 
-def test_max_pages_none_exactly_3000_hits_is_not_truncated():
-    _, _, stats, _ = run(_pages_of(3000), ["a"], max_pages=None)
+def test_start_page_chain_covers_every_hit_exactly_once():
+    seen = set()
+    start = 1
+    while start:
+        _, offers, stats, _ = run(_pages_of(144), ["a"], start_page=start, max_pages=2)
+        got = {o.mall_item_code for o in offers}
+        assert not (got & seen)
+        seen |= got
+        start = stats.per_keyword[0].next_page
+    assert len(seen) == 144
+
+
+def test_everything_fetched_in_the_default_range_has_no_next_page():
+    _, offers, stats, _ = run(_pages_of(61), ["a"])
     s = stats.per_keyword[0]
-    assert (s.pages_fetched, s.received, s.truncated) == (100, 3000, False)
+    assert len(offers) == 61 and (s.last_page, s.next_page, s.remaining, s.truncated) == (3, None, 0, False)
 
 
-def test_explicit_max_pages_100_is_allowed_and_equals_the_ceiling():
-    ad, _, stats, _ = run(_pages_of(5000, upto=101), ["a"], max_pages=100)
-    assert len(ad.calls) == 100 and stats.per_keyword[0].truncated is True
+def test_hits_exactly_90_has_no_next_page():
+    s = run(_pages_of(90), ["a"])[2].per_keyword[0]
+    assert (s.pages_fetched, s.next_page, s.remaining, s.truncated) == (3, None, 0, False)
+
+
+def test_explicit_100_pages_stops_at_the_rakuten_ceiling_without_next_page():
+    ad, offers, stats, _ = run(_pages_of(5000, upto=101), ["a"], max_pages=100)
+    s = stats.per_keyword[0]
+    assert len(ad.calls) == 100 and len(offers) == 3000
+    assert (s.api_count, s.last_page, s.next_page, s.remaining, s.truncated) == (5000, 100, None, 0, False)
+
+
+def test_range_ending_at_page_100_from_97_has_no_next_page_even_with_more_hits():
+    ad, _, stats, _ = run(_pages_of(5000, upto=101), ["a"], start_page=98, max_pages=3)
+    s = stats.per_keyword[0]
+    assert _pages_called(ad) == [98, 99, 100] and s.next_page is None and s.remaining == 0
+
+
+def test_range_past_page_100_is_rejected_before_any_call():
+    ad = FakeAdapter({})
+    for kw in (dict(start_page=99, max_pages=3), dict(start_page=101), dict(start_page=0), dict(start_page=100, max_pages=2)):
+        with pytest.raises(ValueError):
+            search_many(ad, ["a"], sleep=lambda s: None, **kw)
+    assert ad.calls == []
+    with pytest.raises(ValueError, match="100 ページ目までしか返しません"):
+        search_many(ad, ["a"], start_page=99, max_pages=3, sleep=lambda s: None)
+
+
+def test_remaining_ignores_hits_beyond_the_100_page_ceiling():
+    s = run(_pages_of(5000, upto=101), ["a"], max_pages=3)[2].per_keyword[0]
+    assert (s.api_count, s.remaining, s.next_page) == (5000, 2910, 4)  # 3000 - 90
 
 
 def test_stats_has_elapsed_sec_with_one_decimal():
     _, _, stats, _ = run(_pages_of(10), ["a"])
     assert isinstance(stats.elapsed_sec, float) and stats.elapsed_sec >= 0
     assert round(stats.elapsed_sec, 1) == stats.elapsed_sec
+
+
+# --- 時間の安全網（80 秒）: 実時間は clock を注入して固定する ---
+class FakeClock:
+    def __init__(self):
+        self.t = 0.0
+
+    def __call__(self):
+        return self.t
+
+    def sleeper(self, sec):
+        return lambda s: setattr(self, "t", self.t + sec)
+
+
+def _timed_run(pages, keywords, *, per_request_sec, budget=80.0, **kw):
+    clock = FakeClock()
+
+    class TimedAdapter(FakeAdapter):
+        def search(self, keyword, **k):
+            clock.t += per_request_sec
+            return super().search(keyword, **k)
+    ad = TimedAdapter(pages)
+    offers, stats = search_many(ad, keywords, sleep=lambda s: None, clock=clock,
+                                limits=Limits(time_budget_sec=budget), **kw)
+    return ad, offers, stats
+
+
+def test_time_budget_stops_at_80_seconds_and_returns_next_page():
+    ad, offers, stats = _timed_run(_pages_of(3000), ["a"], per_request_sec=1.0, max_pages=100)
+    s = stats.per_keyword[0]
+    assert len(ad.calls) == 80 and stats.elapsed_sec == 80.0       # 81 回目は 80 秒を超えるので取りに行かない
+    assert len(offers) == 80 * 30
+    assert stats.stopped_reason == "time_limit"
+    assert (s.pages_fetched, s.last_page, s.next_page, s.truncated) == (80, 80, 81, True)
+    assert s.remaining == 3000 - 80 * 30
+
+
+def test_time_budget_not_hit_when_fast_enough():
+    ad, _, stats = _timed_run(_pages_of(3000), ["a"], per_request_sec=0.5, max_pages=100)
+    assert len(ad.calls) == 100 and stats.stopped_reason is None
+    assert stats.per_keyword[0].next_page is None
+
+
+def test_time_budget_slow_requests_stop_early_by_prediction():
+    ad, _, stats = _timed_run(_pages_of(3000), ["a"], per_request_sec=30.0, max_pages=100)
+    assert len(ad.calls) == 2 and stats.per_keyword[0].next_page == 3      # 3 回目は 90 秒になるので取らない
+
+
+def test_time_budget_always_makes_the_first_request():
+    ad, offers, stats = _timed_run(_pages_of(3000), ["a"], per_request_sec=500.0, max_pages=3)
+    assert len(ad.calls) == 1 and len(offers) == 30 and stats.per_keyword[0].next_page == 2
+
+
+def test_time_budget_unstarted_keywords_are_listed_with_next_page_from_the_start():
+    pages = {**_pages_of(3000, "a"), **_pages_of(100, "b")}
+    ad, offers, stats = _timed_run(pages, ["a", "b", "c"], per_request_sec=1.0, max_pages=100, start_page=1)
+    a, b, c = stats.per_keyword
+    assert a.next_page == 81 and a.pages_fetched == 80
+    for u in (b, c):
+        assert (u.pages_fetched, u.api_count, u.next_page, u.remaining, u.truncated) == (0, None, 1, None, True)
+    assert {kw for kw, _ in ad.calls} == {"a"} and stats.stopped_reason == "time_limit"
+
+
+def test_time_budget_unstarted_keyword_after_a_finished_one():
+    pages = {**_pages_of(60, "a"), **_pages_of(100, "b")}
+    ad, _, stats = _timed_run(pages, ["a", "b"], per_request_sec=30.0, max_pages=5)
+    a, b = stats.per_keyword
+    assert (a.pages_fetched, a.next_page, a.truncated) == (2, None, False)    # a は取り切った（60 秒）
+    assert (b.pages_fetched, b.next_page, b.api_count) == (0, 1, None)        # b の 1 回目は 90 秒になる見込み → 未着手
+    assert stats.stopped_reason == "time_limit"
+
+
+def test_invalid_time_budget_is_rejected():
+    with pytest.raises(ValueError):
+        search_many(FakeAdapter({}), ["a"], limits=Limits(time_budget_sec=0), sleep=lambda s: None)
