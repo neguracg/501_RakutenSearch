@@ -31,11 +31,17 @@ def is_mock_env() -> bool:
     return os.environ.get(MOCK_ENV) == "1"
 
 
-def make_adapter(mock: bool | None = None,
-                 credentials: RakutenCredentials | None = None) -> MarketplaceAdapter:
-    """MCP と CLI が共通で使う Adapter 生成。mock=None なら環境変数 SHOPPING_MOCK=1 を見る。"""
+LIVE_ENV = "SHOPPING_LIVE"
+
+
+def make_adapter(mock: bool | None = None, credentials: RakutenCredentials | None = None,
+                 *, local_tool: bool = False) -> MarketplaceAdapter:
+    """Adapter 生成。mock が True/False ならそれに従う。None なら環境変数 SHOPPING_MOCK=1 でモック。
+    local_tool=True（CLI・stdio MCP＝運営者の開発・試験用。SPEC §11）は既定がモックで、
+    実 API は明示した時だけ（CLI の --live、または環境変数 SHOPPING_LIVE=1）。公開Web は local_tool=False
+    （実 API が既定）。"""
     if mock is None:
-        mock = is_mock_env()
+        mock = is_mock_env() or (local_tool and os.environ.get(LIVE_ENV) != "1")
     if mock:
         return MockAdapter()
     creds = credentials or load_credentials()
@@ -104,7 +110,7 @@ def _search(keywords, adapter, *, pages, hits, limits, sleep, filters):
     kws = _validate_keywords(keywords)
     if isinstance(kws, dict):
         return kws
-    adapter = adapter if adapter is not None else make_adapter()
+    adapter = adapter if adapter is not None else make_adapter(local_tool=True)
     mock = isinstance(adapter, MockAdapter) or bool(getattr(adapter, "is_mock", False))
     if sleep is None:
         sleep = (lambda s: None) if mock else time.sleep

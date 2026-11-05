@@ -17,7 +17,7 @@
 
 ```
 python -m venv .venv
-.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python -m pip install -r requirements-dev.txt
 ```
 
 実 API を使う時だけ、リポジトリ直下の `.env`（git 管理外）に次の2つを書く。値はコミット・表示しない。
@@ -46,9 +46,11 @@ set BASE_PATH=/kaimono
 
 - 流量保護（楽天 API のクォータを守る）: API 呼び出しはプロセス全体で 1 秒 1 回に直列化、同じ条件は最大 10 分キャッシュ、IP ごとに 20 回/分まで（超えると 429 の案内画面）。`RATE_LIMIT_PER_MIN` で回数を変えられる。
 - 全ページのフッターに楽天のクレジット（Supported by Rakuten Developers）と運営者の責任表示を出す。結果から出るリンクは楽天の商品ページだけ。
-- ヘルスチェック: `{BASE_PATH}/healthz`（API は呼ばない）。
+- ヘルスチェック: `{BASE_PATH}/healthz`（API は呼ばない）。認証情報が無いと 503（`credentials=false`）で、本番での鍵の入れ忘れを unhealthy として検知する。モック運用（`SHOPPING_MOCK=1`）は鍵が要らないので 200。
+- 入力検査: 検索語・含む語・除く語・楽天側の除外語はそれぞれ 1〜5 語、1 語は全角64文字（半角128文字。楽天の上限）まで。価格は 0〜10,000,000。`sort` は楽天公式の値、`basis` は単位表の値だけ。弾いた入力は楽天 API の枠も IP 別回数も消費しない。
+- `GET {BASE_PATH}/mcp` は 405（stateless・JSON 応答のため SSE を開かない。`POST` だけ受ける）。
 
-Docker（VPS 用）: `Dockerfile` と `docker-compose.prod.yml`（サービス `kaimono`、external network `internal`、ポート公開なし）。VPS 上の `.env`（git 管理外・600）に `BASE_PATH=/kaimono` `PUBLIC_BASE_URL=https://app.negura.website/kaimono/`（末尾スラッシュ付き） `APP_ENV=production` `RAKUTEN_APPLICATION_ID` `RAKUTEN_ACCESS_KEY` を置く（`.env.example` は秘密ファイル保護の設定で作れないため、キー名はここを正本とする）。起動・反映は `python C:\Claude\101_KaihatsuHyoujun\vps\vps_deploy.py kaimono` 経由のみ（直の `docker compose up` はフックが遮断）。
+Docker（VPS 用）: `Dockerfile` と `docker-compose.prod.yml`（サービス `kaimono`、external network `internal`、ポート公開なし）。VPS 上の `.env`（git 管理外・600）に `BASE_PATH=/kaimono` `PUBLIC_BASE_URL=https://app.negura.website/kaimono/`（末尾スラッシュ付き） `APP_ENV=production` `RAKUTEN_APPLICATION_ID` `RAKUTEN_ACCESS_KEY` を置く（`.env.example` は秘密ファイル保護の設定で作れないため、キー名はここを正本とする）。起動・反映は VPS 上の `/opt/apps/_tools/deploy_app.sh kaimono` を `nohup setsid` でデタッチ起動する（直の `docker compose up` はフックが遮断）。イメージには `requirements.txt`（本番用）だけを入れる。試験用の `pytest` と `httpx` は `requirements-dev.txt`。
 
 ## ChatGPT のチャットから使う（リモートMCP）
 
@@ -73,7 +75,7 @@ Claude・Codex など他の MCP クライアントも同じ URL を登録すれ�
 .venv\Scripts\python cli.py regular detergent-refill --regulars examples\regulars.sample.json --mock
 ```
 
-- `--mock` を付ける（または環境変数 `SHOPPING_MOCK=1`）と、架空データ（`src/shopping/mock_data.json`）を返し、API を呼ばない。付けないと実 API を呼ぶ。
+- **既定は架空データ**（`src/shopping/mock_data.json`。洗剤・電池・水・ソーラーパネル・トイレットペーパーの架空商品）で、API を呼ばない。実 API を呼ぶのは `--live`（または環境変数 `SHOPPING_LIVE=1`）を明示した時だけ（運営者の開発・試験用。SPEC §11）。`--mock` は互換のため残してある。
 - `--json` で整形済み JSON。キーワードは 1 回 5 個まで、ページは語ごとに 3 ページまで、リクエスト間隔は 1 秒以上。
 - 比較は「商品価格」「単位価格」「支払総額」「必要数量を満たす最安」を分けて出す。送料が不明な候補があると支払総額の最安は断定せず、理由を表示する。単価は `--basis`（個・ml・g・m・W・mAh・Wh。L・kg などの別名も可。省略で自動）あたりで出し、その量を読み取れない候補は「単価不明」として最安判定から外す。`--include` は商品名に全部含む語、`--exclude` は含んだら外す語。仕様の違い（濃縮・層数・型番・色など）は判定しないので、結果の商品名で確認する。
 
@@ -83,7 +85,7 @@ Claude・Codex など他の MCP クライアントも同じ URL を登録すれ�
 
 ```
 set PYTHONPATH=src
-set SHOPPING_MOCK=1
+rem 既定はモック（API を呼ばない）。実 API は set SHOPPING_LIVE=1 を明示した時だけ
 .venv\Scripts\python -m shopping.mcp_server
 ```
 
@@ -92,7 +94,7 @@ MCP クライアント側の設定例（コマンドと環境変数の指定。�
 ```
 command: <このリポジトリ>\.venv\Scripts\python.exe
 args:    -m shopping.mcp_server
-env:     PYTHONPATH=<このリポジトリ>\src, SHOPPING_MOCK=1   （実 API を使う時は SHOPPING_MOCK を外す）
+env:     PYTHONPATH=<このリポジトリ>\src   （既定はモック。実 API を使う時だけ SHOPPING_LIVE=1 を足す）
 ```
 
 ## 定番品マスタ

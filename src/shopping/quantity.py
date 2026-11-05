@@ -56,7 +56,8 @@ _FILL = r"(?:入り?|入数|セット|組|パック|袋|箱|ケース|梱|各|�
 _GAP_X = re.compile(rf"\s*(?:{_FILL}\s*)*[×x*]\s*")
 _GAP_LABEL = re.compile(rf"\s*(?:{_FILL}\s*)*[×x*]\s*[^\d×x*\s]{{0,4}}\s*")
 _GAP_PLAIN = re.compile(r"\s*(?:(?:入り?|入数|約|各)\s*)*")
-_NUM = r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
+# 桁数を切る（出店者の書いた巨大な数字列で float が inf になり int() が落ちる事故を防ぐ）
+_NUM = r"(?<![\d.,])(?:\d{1,3}(?:,\d{3})+|\d{1,9})(?![\d,])(?:\.\d{1,9})?"
 _AFTER_SKIP = re.compile(r"\s*(?:分(?![a-z])|相当|換算|あたり|当たり|当り|につき|ごと|限定|まで|以上|以下|以内|未満|から|ずつ)")
 _BEFORE_SKIP = re.compile(r"(?:最大|最小)\s*$")
 # 販促・価格表記（数量ではない）
@@ -169,7 +170,7 @@ def _token_re(unit_keys: tuple[str, ...], counter_keys: tuple[str, ...]):
         rf"(?P<num>{_NUM})\s*(?:(?P<unit>{_alt(unit_keys)})(?!サイズ)|(?P<counter>{_alt(counter_keys)}))")
 
 
-_BARE_RE = re.compile(r"(?:[×*]|(?<![a-z])x)\s*(\d+)(?![\d.]|[a-z])")
+_BARE_RE = re.compile(r"(?:[×*]|(?<![a-z])x)\s*(\d{1,9})(?![\d.]|[a-z])")
 
 
 def _num(text: str) -> float:

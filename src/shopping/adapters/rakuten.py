@@ -49,8 +49,11 @@ def _to_int(value: object) -> int | None:
         return None
     if isinstance(value, int):
         return value
-    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
-        return int(value.strip())
+    if isinstance(value, str):
+        t = value.strip()
+        digits = t[1:] if t.startswith("-") else t
+        if digits and len(digits) <= 18 and digits.isascii() and digits.isdecimal():    # ①² などの Unicode 数字・巨大な数字列を int() に渡さない
+            return int(t)
     return None
 
 

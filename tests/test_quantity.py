@@ -201,3 +201,10 @@ def test_content_is_attached_wherever_it_appears():
 def test_does_not_match_inside_words():
     assert parse_quantity("12 RICH PAPER").confidence == "none"
     assert parse_quantity("max2x3 BOX").confidence == "none"
+
+
+def test_hostile_huge_numbers_never_raise():
+    # 出店者が書く商品名は信用しない: 巨大な数字列で float が inf になって int() が落ちない
+    for text in ["9" * 400 + "個", "洗剤 " + "9" * 400 + "g×6", "1" * 5000 + "ml", "12ロール×" + "9" * 50]:
+        assert parse_quantity(text).confidence in ("none", "high", "low")
+    assert parse_quantity("1,000ml×3").content_amount == 1000

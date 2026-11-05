@@ -56,12 +56,39 @@ def test_limit_error_returns_1(capsys):
     assert "invalid_request" in capsys.readouterr().err
 
 
-def test_without_credentials_and_without_mock_stops_safely(capsys, monkeypatch):
+def _no_credentials(monkeypatch):
     # .env を読ませない（実キーを使わない・通信もしない）: 認証情報が空なら adapter は通信前に止まる
     monkeypatch.setattr("shopping.service.load_credentials",
                         lambda *a, **k: __import__("shopping.config", fromlist=["x"]).RakutenCredentials("", ""))
+
+
+def test_default_is_mock_and_never_calls_real_api(capsys, monkeypatch):
+    # B4: フラグも環境変数も無ければモック。認証情報を読みにも行かない
+    monkeypatch.setattr("shopping.service.load_credentials",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("実 API の認証情報を読んだ")))
+    assert cli.run(["search", "洗濯洗剤"]) == 0
+    assert "モック" in capsys.readouterr().out
+    assert cli.run(["compare", "単3電池"]) == 0
+
+
+def test_live_flag_uses_real_adapter_and_stops_safely_without_credentials(capsys, monkeypatch):
+    _no_credentials(monkeypatch)
+    assert cli.run(["search", "洗濯洗剤", "--live"]) == 1
+    assert "missing_credentials" in capsys.readouterr().err
+
+
+def test_live_env_uses_real_adapter(capsys, monkeypatch):
+    _no_credentials(monkeypatch)
+    monkeypatch.setenv("SHOPPING_LIVE", "1")
     assert cli.run(["search", "洗濯洗剤"]) == 1
     assert "missing_credentials" in capsys.readouterr().err
+    assert cli.run(["search", "洗濯洗剤", "--mock"]) == 0          # 明示の --mock は常に勝つ
+
+
+def test_mock_and_live_are_mutually_exclusive():
+    with pytest.raises(SystemExit) as e:
+        cli.run(["search", "a", "--mock", "--live"])
+    assert e.value.code == 2
 
 
 def test_subprocess_utf8_output_does_not_crash():

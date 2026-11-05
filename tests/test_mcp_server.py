@@ -85,6 +85,18 @@ def test_invalid_arguments_do_not_crash_server():
     assert r.structured_content["error"]["kind"] == "invalid_request"
 
 
+def test_stdio_default_is_mock_and_live_needs_explicit_env(monkeypatch):
+    # B4: SHOPPING_MOCK が無くてもモック。SHOPPING_LIVE=1 の時だけ実 API の Adapter（認証情報が無ければ安全に止まる）
+    monkeypatch.delenv("SHOPPING_MOCK")
+    r = call("search_products", {"keywords": ["洗濯洗剤"]})
+    assert r.structured_content["ok"] and r.structured_content["mock"] is True
+    monkeypatch.setenv("SHOPPING_LIVE", "1")
+    monkeypatch.setattr("shopping.service.load_credentials",
+                        lambda *a, **k: __import__("shopping.config", fromlist=["x"]).RakutenCredentials("", ""))
+    r = call("search_products", {"keywords": ["洗濯洗剤"]})
+    assert r.structured_content["ok"] is False and r.structured_content["error"]["kind"] == "missing_credentials"
+
+
 def test_stdio_subprocess_serves_mock_without_credentials():
     """実際に `python -m shopping.mcp_server` を子プロセスで起動して stdio 越しに呼ぶ。"""
     from mcp.client.stdio import stdio_client

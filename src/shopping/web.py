@@ -12,21 +12,19 @@ import re
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import service
 from .config import load_credentials
 from .guard import Gate, RateLimited, client_ip_var, pick_client_ip
+from .inputs import MAX_PRICE, InvalidInput
 from .mcp_server import build_server
 from .orchestrator import Limits
 from .web_view import group_title, render
 
 PAGES = 1
 HITS = 30
-MAX_KEYWORDS = 5
-MAX_KEYWORD_CHARS = 60
-MAX_PRICE = 10_000_000
 
 _SECURITY_HEADERS = {
     "Content-Security-Policy": ("default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; "
@@ -62,16 +60,9 @@ def _client_ip(request: Request) -> str:
                           request.client.host if request.client else None)
 
 
-def parse_keywords(q: str | None) -> list[str] | str:
-    """改行・カンマ区切りで 1〜5 語。不正なら利用者向けの説明文字列を返す。"""
-    parts = [p.strip() for p in re.split(r"[\n\r,，、]+", q or "") if p.strip()]
-    if not parts:
-        return "検索したい言葉を入力してください。"
-    if len(parts) > MAX_KEYWORDS:
-        return f"検索語は {MAX_KEYWORDS} 語までです（{len(parts)} 語入力されています）。"
-    if any(len(p) > MAX_KEYWORD_CHARS for p in parts):
-        return f"1 語は {MAX_KEYWORD_CHARS} 文字までです。"
-    return parts
+def parse_keywords(q: str | None) -> list[str]:
+    """改行・カンマ区切り。語数・長さの検査は guard.Gate.admit（inputs）が持つ。"""
+    return [p.strip() for p in re.split(r"[\n\r,，、]+", q or "") if p.strip()]
 
 
 def parse_terms(raw: str | None) -> list[str] | None:
@@ -84,7 +75,7 @@ def _parse_price(raw: str | None, label: str) -> int | None | str:
     if raw is None or raw.strip() == "":
         return None
     t = raw.strip().replace(",", "").replace("，", "")
-    if not t.isdigit() or int(t) > MAX_PRICE:
+    if not (t.isascii() and t.isdecimal() and len(t) <= 12) or int(t) > MAX_PRICE:   # 桁数を先に切る（巨大な数字列で int() を重くしない）
         return f"{label}は 0〜{MAX_PRICE:,} の整数で入力してください。"
     return int(t)
 
@@ -99,6 +90,10 @@ class _McpMiddleware:
 
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http" and scope["path"].rstrip("/") == self.path:
+            if scope.get("method") != "POST":
+                # stateless・JSON 応答なので SSE ストリーム（GET）や セッション終了（DELETE）は提供しない
+                await Response(status_code=405, headers={"Allow": "POST"})(scope, receive, send)
+                return
             headers = dict(scope.get("headers") or [])
             ip = pick_client_ip(headers.get(b"cf-connecting-ip", b"").decode("latin-1") or None,
                                 (scope.get("client") or (None,))[0])
@@ -140,14 +135,17 @@ def create_app(base_path: str | None = None, gate: Gate | None = None) -> FastAP
         lo = _parse_price(min_price, "価格の下限")
         hi = _parse_price(max_price, "価格の上限")
         ng_word = (ng or "").strip()
-        problem = (keywords if isinstance(keywords, str) else lo if isinstance(lo, str)
-                   else hi if isinstance(hi, str)
-                   else f"除外語は {MAX_KEYWORD_CHARS} 文字までです。" if len(ng_word) > MAX_KEYWORD_CHARS
-                   else None)
+        inc, exc_terms = parse_terms(include), parse_terms(exclude)
+        basis_arg = (basis or "").strip() or None
+        problem = lo if isinstance(lo, str) else hi if isinstance(hi, str) else None
         if problem:
             return _message(request, 400, "入力を確認してください", problem)
         try:
-            gate.check(_client_ip(request))
+            gate.admit(_client_ip(request), keywords=keywords, ng_keyword=ng_word or None,
+                       min_price=lo, max_price=hi, include_terms=inc, exclude_terms=exc_terms,
+                       basis=basis_arg)
+        except InvalidInput as exc:
+            return _message(request, 400, "入力を確認してください", str(exc))
         except RateLimited as exc:
             return _message(request, 429, "少し待ってからもう一度お試しください",
                             "短い時間にたくさんの検索がありました。しばらくしてからもう一度お試しください。",
@@ -155,8 +153,7 @@ def create_app(base_path: str | None = None, gate: Gate | None = None) -> FastAP
         common = dict(ng_keyword=ng_word or None, min_price=lo, max_price=hi, pages=PAGES, hits=HITS,
                       adapter=gate.adapter, sleep=lambda s: None, limits=Limits(min_interval_sec=0))
         if mode == "compare":
-            result = service.compare_offers(keywords, parse_terms(include), parse_terms(exclude),
-                                            None, (basis or "").strip() or None, **common)
+            result = service.compare_offers(keywords, inc, exc_terms, None, basis_arg, **common)
         else:
             result = service.search_products(keywords, max_results=HITS, **common)
         if not result.get("ok"):
@@ -201,8 +198,11 @@ def create_app(base_path: str | None = None, gate: Gate | None = None) -> FastAP
 
     @router.get("/healthz")
     def healthz():
-        # 楽天 API は呼ばない。秘密の値は出さず、設定の有無だけ返す
-        return JSONResponse({"ok": True, "credentials": load_credentials().present})
+        # 楽天 API は呼ばない。秘密の値は出さず、設定の有無だけ返す。鍵が無いのに起動している本番を
+        # unhealthy（503）にして検知する（モック運用は鍵を要さないので 200）
+        present = load_credentials().present
+        ok = present or bool(getattr(gate.adapter, "is_mock", False))
+        return JSONResponse({"ok": ok, "credentials": present}, status_code=200 if ok else 503)
 
     app.include_router(router, prefix=base)
     if base:

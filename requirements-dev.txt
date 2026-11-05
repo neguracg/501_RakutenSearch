@@ -1,0 +1,4 @@
+# 開発・試験用（本番の Docker イメージには入れない）
+-r requirements.txt
+pytest==9.2.0
+httpx==0.28.1

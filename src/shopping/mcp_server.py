@@ -2,7 +2,7 @@
 """MCP サーバー（mcp 2.3.0 / MCPServer）。stdout は MCP のプロトコル用なので print しない。
 
 起動: python -m shopping.mcp_server   （PYTHONPATH=src）  … 運営者用（開発・試験）。3 ツール。
-      SHOPPING_MOCK=1 でモック（API を呼ばない）。
+      既定はモック（API を呼ばない）。実 API は SHOPPING_LIVE=1 を明示した時だけ。
 公開: build_server(public=True, gate=Gate) を web.py が {BASE}/mcp に載せる。search_products と
       compare_offers の 2 ツールだけ（find_regular_item は出さない）。流量保護は guard の Gate を共有し、
       結果に楽天のクレジット・運営者表示を必ず含める。
@@ -17,6 +17,7 @@ from mcp.types import ToolAnnotations
 from . import service
 from .credit import CREDIT_TEXT, mcp_credit_fields
 from .guard import Gate, RateLimited, client_ip_var
+from .inputs import InvalidInput
 from .orchestrator import Limits
 
 INSTRUCTIONS = (
@@ -46,13 +47,16 @@ def build_server(*, public: bool = False, gate: Gate | None = None) -> MCPServer
         raise ValueError("public server needs a Gate")
     server = MCPServer("shopping-research", instructions=INSTRUCTIONS)
 
-    def invoke(fn, *args, pages: int = 1, **kw) -> dict[str, Any]:
+    def invoke(fn, *args, check: dict, pages: int = 1, **kw) -> dict[str, Any]:
+        """check は公開面の入力検査に渡す項目（guard.Gate.admit → inputs.validate）。"""
         if not public:
-            return fn(*args, pages=pages, adapter=service.make_adapter(), **kw)
+            return fn(*args, pages=pages, adapter=service.make_adapter(local_tool=True), **kw)
         try:
-            gate.check(client_ip_var.get())
+            gate.admit(client_ip_var.get(), **check)
+        except InvalidInput as exc:
+            out: dict[str, Any] = {"ok": False, "error": {"kind": "invalid_request", "message": str(exc)}}
         except RateLimited as exc:
-            out: dict[str, Any] = {"ok": False, "error": {
+            out = {"ok": False, "error": {
                 "kind": "rate_limited",
                 "message": f"短い時間に呼び出しが多すぎる。{exc.retry_after}秒ほど待ってからやり直すこと。"}}
         else:
@@ -84,7 +88,9 @@ def build_server(*, public: bool = False, gate: Gate | None = None) -> MCPServer
                         sort: str = "standard", pages: int = 1,
                         max_results: int = 30) -> dict[str, Any]:
         return invoke(service.search_products, keywords, ng_keyword=ng_keyword, min_price=min_price,
-                      max_price=max_price, sort=sort, pages=pages, max_results=max_results)
+                      max_price=max_price, sort=sort, pages=pages, max_results=max_results,
+                      check=dict(keywords=keywords, ng_keyword=ng_keyword, min_price=min_price,
+                                 max_price=max_price, sort=sort))
 
     @server.tool(
         name="compare_offers",
@@ -115,7 +121,11 @@ def build_server(*, public: bool = False, gate: Gate | None = None) -> MCPServer
                        sort: str = "standard", pages: int = 1) -> dict[str, Any]:
         return invoke(service.compare_offers, keywords, include_terms, exclude_terms,
                       desired_quantity, basis, ng_keyword=ng_keyword, min_price=min_price,
-                      max_price=max_price, sort=sort, pages=pages)
+                      max_price=max_price, sort=sort, pages=pages,
+                      check=dict(keywords=keywords, ng_keyword=ng_keyword, min_price=min_price,
+                                 max_price=max_price, sort=sort, include_terms=include_terms,
+                                 exclude_terms=exclude_terms, basis=basis,
+                                 desired_quantity=desired_quantity))
 
     if public:
         return server   # 定番品（個人の購入リスト）は公開面に出さない（AC-W8）
@@ -133,7 +143,8 @@ def build_server(*, public: bool = False, gate: Gate | None = None) -> MCPServer
             "id が不明な時は、マスタに無い旨のエラー(regulars_not_found)が返る。"),
     )
     def find_regular_item(regular_id: str, pages: int = 1) -> dict[str, Any]:
-        return service.find_regular_item(regular_id, pages=pages, adapter=service.make_adapter())
+        return service.find_regular_item(regular_id, pages=pages,
+                                         adapter=service.make_adapter(local_tool=True))
 
     return server
 

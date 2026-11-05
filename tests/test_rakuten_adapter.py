@@ -193,3 +193,21 @@ def test_no_secret_in_exceptions_offers_or_repr():
     offers, _ = ad.search("x")
     assert APP_ID not in repr(offers) and KEY not in repr(offers)
     assert APP_ID not in repr(ad) and KEY not in repr(ad)
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("1980", 1980), (" 12 ", 12), ("-5", -5), (7, 7), ("①②", None), ("²", None), ("１２３", None),
+    ("٣", None), ("--5", None), ("-", None), ("", None), ("1.5", None), (True, None), (None, None),
+    ("9" * 5000, None),
+])
+def test_to_int_accepts_only_ascii_digits(raw, expected):
+    # B3: isdigit() は ①² を真とするのに int() が落ちる。Unicode 数字で例外を出さない
+    from shopping.adapters.rakuten import _to_int
+    assert _to_int(raw) == expected
+
+
+def test_parse_item_with_unicode_digit_fields_does_not_raise():
+    from shopping.adapters.rakuten import parse_item
+    o = parse_item({"itemCode": "s:1", "itemName": "x", "itemPrice": "①²", "postageFlag": "²",
+                    "reviewCount": "٣", "itemUrl": "https://item.rakuten.co.jp/s/1/"}, "t")
+    assert o.price is None and o.shipping_status == "unknown" and o.review_count is None

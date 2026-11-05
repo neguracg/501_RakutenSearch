@@ -153,13 +153,47 @@ def test_multiple_keywords_split_by_newline_and_comma_max_five():
     assert c.get("/search", params={"q": "1,2,3,4,5,6"}).status_code == 400
 
 
-@pytest.mark.parametrize("params", [{}, {"q": "  "}, {"q": "x" * 61}, {"q": "a", "min_price": "abc"},
-                                    {"q": "a", "max_price": "-5"}, {"q": "a", "ng": "x" * 61}])
-def test_invalid_input_is_400_and_does_not_call_api(params):
+@pytest.mark.parametrize("params", [
+    {}, {"q": "  "}, {"q": "x" * 129}, {"q": "あ" * 65}, {"q": "a", "min_price": "abc"},
+    {"q": "a", "max_price": "-5"}, {"q": "a", "ng": "x" * 129}, {"q": "a", "ng": "a b c d e f"},
+    {"q": "a", "min_price": "①②"}, {"q": "a", "max_price": "²"}, {"q": "a", "min_price": "１２３"},
+    {"q": "a", "max_price": "10000001"}, {"q": "a", "max_price": "9" * 5000},
+])
+@pytest.mark.parametrize("path", ["/search", "/compare"])
+def test_invalid_input_is_400_and_does_not_call_api(path, params):
     ad = fake()
-    c, _, _ = make_client("", adapter=ad)
-    assert c.get("/search", params=params).status_code == 400
-    assert ad.calls == []
+    c, gate, ga = make_client("", adapter=ad)
+    assert c.get(path, params=params).status_code == 400
+    assert ad.calls == [] and ga.api_calls == 0
+
+
+@pytest.mark.parametrize("params", [{"q": "a", "include": "x" * 129}, {"q": "a", "exclude": "a b c d e f"},
+                                    {"q": "a", "basis": "ふしぎ"}, {"q": "a", "basis": "x" * 500},
+                                    {"q": "a", "include": "あ" * 65}])
+def test_invalid_compare_options_are_400_and_do_not_call_api(params):
+    ad = fake()
+    c, _, ga = make_client("", adapter=ad)
+    r = c.get("/compare", params=params)
+    assert r.status_code == 400 and ad.calls == [] and ga.api_calls == 0
+
+
+def test_limit_text_matches_the_checked_limit_and_input_never_echoed():
+    c, _, _ = make_client("")
+    r = c.get("/search", params={"q": "あ" * 65})
+    assert r.status_code == 400 and "全角64文字（半角128文字）" in r.text and "あ" * 65 not in r.text
+    assert c.get("/search", params={"q": "あ" * 64}).status_code == 200      # ちょうど上限は通る
+    assert c.get("/search", params={"q": "x" * 128}).status_code == 200
+
+
+def test_rejected_input_does_not_consume_the_ip_budget():
+    clock = Clock()
+    c, _, _ = make_client("", limiter=RateLimiter(limit=2, clock=clock), clock=clock)
+    h = {"CF-Connecting-IP": "203.0.113.50"}
+    for _ in range(5):
+        assert c.get("/search", params={"q": "a", "min_price": "abc"}, headers=h).status_code == 400
+        assert c.get("/search", params={"q": "あ" * 65}, headers=h).status_code == 400
+    assert c.get("/search", params={"q": "洗濯洗剤"}, headers=h).status_code == 200
+    assert c.get("/search", params={"q": "洗濯洗剤"}, headers=h).status_code == 200
 
 
 def test_price_and_ng_are_passed_through():
@@ -277,7 +311,8 @@ def test_mock_mode_notes_and_guarded_mock_detection(monkeypatch):
     assert r.status_code == 200 and "架空" in r.text
 
 
-def test_healthz_does_not_call_api_and_reports_missing_credentials(monkeypatch):
+def test_healthz_is_503_without_credentials_and_does_not_call_api(monkeypatch):
+    # C6: 本番で鍵の入れ忘れを unhealthy で検知する
     monkeypatch.delenv("RAKUTEN_APPLICATION_ID")
     monkeypatch.delenv("RAKUTEN_ACCESS_KEY")
     monkeypatch.setattr("shopping.web.load_credentials",
@@ -285,7 +320,16 @@ def test_healthz_does_not_call_api_and_reports_missing_credentials(monkeypatch):
     ad = fake()
     c, _, _ = make_client("", adapter=ad)
     r = c.get("/healthz")
-    assert r.json() == {"ok": True, "credentials": False} and ad.calls == []
+    assert r.status_code == 503 and r.json() == {"ok": False, "credentials": False} and ad.calls == []
+
+
+def test_healthz_is_200_in_mock_mode_even_without_credentials(monkeypatch):
+    # モック運用（SHOPPING_MOCK=1）は鍵を要さない
+    monkeypatch.setattr("shopping.web.load_credentials", lambda: type("C", (), {"present": False})())
+    clock = Clock()
+    gate = Gate(GuardedAdapter(MockAdapter(), clock=clock, sleep=clock.sleep), RateLimiter(limit=100))
+    r = TestClient(create_app("", gate)).get("/healthz")
+    assert r.status_code == 200 and r.json() == {"ok": True, "credentials": False}
 
 
 # --- WP3: 含む語・除く語・比べる単位 ---

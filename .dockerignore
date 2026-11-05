@@ -13,3 +13,5 @@ plans
 docs
 examples
 HANDOFF.md
+requirements-dev.txt
+tests

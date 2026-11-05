@@ -5,7 +5,8 @@
   python cli.py compare "kw1" ... [--include 語 ...] [--exclude 語 ...] [--basis 個|ml|g|m|W|...] [--desired-quantity N] [...]
   python cli.py regular <id> [--regulars PATH] [--mock] [--json]
 
---mock（または環境変数 SHOPPING_MOCK=1）で架空データを使い、API を呼ばない。
+既定は架空データ（モック。API を呼ばない）。実 API を呼ぶのは --live（または環境変数 SHOPPING_LIVE=1）を
+明示した時だけ（SPEC §11: ローカルの CLI は運営者の開発・試験用。普段使いは公開Web / {BASE}/mcp）。
 表示に認証情報・接続元 IP は出さない。商品固有 URL は出す。
 """
 from __future__ import annotations
@@ -31,7 +32,9 @@ def _add_search_args(p: argparse.ArgumentParser) -> None:
 
 
 def _add_common(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--mock", action="store_true", help="架空データを使う（API を呼ばない）")
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--mock", action="store_true", help="架空データを使う（既定。API を呼ばない）")
+    g.add_argument("--live", action="store_true", help="実 API を呼ぶ（認証情報が要る。運営者の開発・試験用）")
     p.add_argument("--json", action="store_true", help="JSON で出力")
 
 
@@ -134,7 +137,8 @@ def render_compare(r: dict) -> None:
 
 def run(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    adapter = service.make_adapter(mock=True if args.mock else None)
+    adapter = service.make_adapter(mock=True if args.mock else (False if args.live else None),
+                                   local_tool=True)
     if args.command == "search":
         result = service.search_products(
             args.keywords, ng_keyword=args.ng_keyword, min_price=args.min_price,

@@ -6,6 +6,7 @@ from jinja2 import DictLoader, Environment
 
 from .adapters.rakuten import is_item_url
 from .credit import CREDIT_HTML, FRESHNESS_TEXT, OPERATOR_TEXT
+from .inputs import MAX_KEYWORDS, WIDTH_TEXT
 from .quantity import basis_choices
 
 _CSS = """
@@ -59,12 +60,12 @@ _TEMPLATES = {
 <form method="get" action="{{ base }}/search">
 <label for="q">探したいもの（1〜5語）</label>
 <textarea id="q" name="q" rows="3" required placeholder="例: 洗濯洗剤 詰め替え 900g">{{ form.q }}</textarea>
-<div class="hint">改行またはカンマで区切ると、語ごとに検索して統合します。</div>
+<div class="hint">改行またはカンマで区切ると、語ごとに検索して統合します（{{ max_terms }}語まで・1語は{{ width_text }}まで）。</div>
 <label for="include">含む語（任意。商品名に全部含むものだけ残す）</label>
 <input id="include" name="include" value="{{ form.include }}" placeholder="例: 詰め替え 濃縮">
 <label for="exclude">除く語（任意。商品名に含むものは外す）</label>
 <input id="exclude" name="exclude" value="{{ form.exclude }}" placeholder="例: 本体 訳あり">
-<div class="hint">語は空白かカンマで区切ります（5語まで）。仕様の違い（濃縮・型番・色など）は自動では判定しないので、ここで絞るか結果の商品名で確認してください。</div>
+<div class="hint">語は空白かカンマで区切ります（{{ max_terms }}語まで・1語は{{ width_text }}まで。楽天側の除外語も同じ）。仕様の違い（濃縮・型番・色など）は自動では判定しないので、ここで絞るか結果の商品名で確認してください。</div>
 <label for="ng">楽天側の除外語（任意）</label>
 <input id="ng" name="ng" value="{{ form.ng }}">
 <label for="basis">比べる単位</label>
@@ -166,7 +167,8 @@ def _safe_url(o: dict) -> bool:
 def render(name: str, base: str, **ctx) -> str:
     return _env.get_template(name).render(
         base=base, css=_CSS, credit=CREDIT_HTML, operator=OPERATOR_TEXT, freshness=FRESHNESS_TEXT,
-        yen=_yen, ship=_ship, qty=_qty, safe_url=_safe_url, bases=basis_choices(), **ctx)
+        yen=_yen, ship=_ship, qty=_qty, safe_url=_safe_url, bases=basis_choices(),
+        max_terms=MAX_KEYWORDS, width_text=WIDTH_TEXT, **ctx)
 
 
 _DIMENSION_LABELS = {"count": "個数", "volume": "容量", "mass": "重さ", "length": "長さ",

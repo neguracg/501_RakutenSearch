@@ -3,6 +3,7 @@
 
 - GuardedAdapter: 楽天 API への呼び出しをプロセス全体で 1 秒 1 回に直列化し、同じ条件はメモリに最大 10 分キャッシュする。
 - RateLimiter: キー（IP）別の回数制限。
+- Gate.admit: 公開面の入口。入力検査（inputs）→ 回数制限の順で、弾いた入力は API 枠も回数も消費しない。
 - 時計と sleep は差し替え可能（試験で実時間を待たない）。
 - 例外・ログに URL・キー・応答本文を出さない（AdapterError は kind のみ）。
 """
@@ -17,6 +18,7 @@ import time
 from collections import OrderedDict, deque
 
 from .adapters.base import AdapterError, MarketplaceAdapter
+from . import inputs
 from .adapters.mock import MockAdapter
 
 MIN_INTERVAL_SEC = 1.0
@@ -155,6 +157,12 @@ class Gate:
     def check(self, ip: str | None) -> None:
         """回数制限。超えたら RateLimited。"""
         self.limiter.hit(ip or "unknown")
+
+    def admit(self, ip: str | None, **fields) -> None:
+        """公開面（Web と MCP）の入口。先に入力を検査し（不正なら inputs.InvalidInput）、通ったものだけ回数を数える。
+        ロック取得・最小間隔のスリープ・API 呼び出しより前に置くので、弾いた入力は API 枠を消費しない。"""
+        inputs.validate(**fields)
+        self.check(ip)
 
 
 def _env_int(name: str, default: int) -> int:
