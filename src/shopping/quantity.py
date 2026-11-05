@@ -253,6 +253,9 @@ _UNK_AFTER = re.compile(r"\s*(?:入り?|入数)?\s*(?:[×*]|x)\s*\d")
 # P7 の対象: 量・個数に空白で続く「数字＋カタカナの語」（ブロック・カップ・ボトル・パウチ）。漢字の語（2層・1年・3色）と
 # 英字の語（4K・60fps）は仕様・期間の記号が大半なので対象にしない
 _KATAKANA_WORD = re.compile(r"[ァ-ヶ]")
+# P0（WP9）E2: 構成品を並べる連結記号（NFKC 後の + と &。＋・＆ を含む）。この記号でつながれた列の中の個数
+# （本体+バッテリ2個+充電器）は構成品の1つの個数であって、商品全体の個数ではない
+_BUNDLE_JOINERS = "+&"
 
 
 def _num(text: str) -> float:
@@ -285,6 +288,40 @@ def _is_link_position(s: str, start: int, end: int) -> bool:
     return bool(_UNK_BEFORE.search(s[:start]) or _UNK_AFTER.match(s, end))
 
 
+def _in_bundle_list(s: str, start: int, end: int) -> bool:
+    """P0（WP9）E2: [start, end) の個数が、+・& でつながれた構成品の列の中にあるか。空白を含まない一続きの語に
+    連結記号がある（本体+バッテリ2個+充電器）か、その語が空白で区切られた単独の連結記号に隣り合う（本体 + バッテリ2個）時。
+    語のリストではなく「連結記号でつながれた列の中」という位置で判定する。"""
+    b = start
+    while b > 0 and not s[b - 1].isspace():
+        b -= 1
+    f = end
+    while f < len(s) and not s[f].isspace():
+        f += 1
+    if any(c in _BUNDLE_JOINERS for c in s[b:f]):
+        return True
+    # 空白で区切られた単独の記号（本体 + バッテリ2個）。語に付いた記号（BIGCAPA basic+ 単3形20本）は商品名の一部
+    left, right = s[:b].rstrip(), s[f:].lstrip()
+    return bool((left[-1:] in tuple(_BUNDLE_JOINERS) and (len(left) == 1 or left[-2].isspace()))
+                or (right[:1] in tuple(_BUNDLE_JOINERS) and (len(right) == 1 or right[1].isspace())))
+
+
+def _identity(m: re.Match, counters: dict[str, str], units: dict[str, tuple[str, float]]):
+    """トークンの正規の同一性（P0 WP9 E1）。計量値は (次元, 基準単位に直した量)、個数は (正規の数え語, 数)。
+    読めない（桁超過・千区切りの形でない・小数の個数・0）なら None。"""
+    raw = m.group("num")
+    if not _digits_ok(raw):
+        return None
+    value = _num(raw)
+    if m.group("unit"):
+        dim, factor = units[m.group("unit")]
+        amount = round(value * factor, 9)
+        return ("measure", dim, amount) if amount > 0 else None
+    if value != int(value):
+        return None
+    return ("count", counters[m.group("counter")], int(value))
+
+
 def _note_dropped(m: re.Match, s: str, counters: dict[str, str], units: dict[str, tuple[str, float]],
                   dropped: list[float], dropped_measures: list[tuple[str, float]],
                   *, serving: bool = False) -> None:
@@ -305,12 +342,17 @@ def _note_dropped(m: re.Match, s: str, counters: dict[str, str], units: dict[str
 
 
 def _tokens(s: str, flags: list[str], dropped: list[float],
-            dropped_measures: list[tuple[str, float]] | None = None) -> list[_Tok]:
-    """flags に "oversize"（桁が多すぎる数）・"dropped_link"（連結位置の数え語を個数に採れなかった。P6）を積む。
+            dropped_measures: list[tuple[str, float]] | None = None,
+            embedded: list[tuple] | None = None) -> list[_Tok]:
+    """flags に "oversize"（桁が多すぎる数）・"dropped_link"（連結位置の数え語を個数に採れなかった。P6）・
+    "bundle_list"（+・& でつながれた構成品の列の中の個数。WP9 E2）を積む。embedded には、英数字の語（型番）の内側にあって
+    読み飛ばした「数字＋単位・数え語」の同一性（_identity）を積む（採用した量が同じ表記で型番の一部にも現れるかを parse_quantity が見る。WP9 E1）。
     dropped には P5 の境界で個数に採らなかった「数字＋数え語」の数を、dropped_measures には採らなかった
     「数字＋計量単位」の（次元, 基準単位に直した量）を積む（採用した総数・内容量との食い違いを parse_quantity が見る。P0）。"""
     if dropped_measures is None:
         dropped_measures = []
+    if embedded is None:
+        embedded = []
     units, counters, mults = _unit_table(), _counter_table(), _multiplier_table()
     rx = _token_re(tuple(units), tuple(counters))
     solo_low = {_norm(w) for w in SOLO_LOW_COUNTERS}
@@ -337,6 +379,14 @@ def _tokens(s: str, flags: list[str], dropped: list[float],
                         and not (toks and toks[-1].kind == "count" and toks[-1].word == counters[m.group("counter")]))
             if (prev in "_/" or after_prev) and not per_unit:
                 _note_dropped(m, s, counters, units, dropped, dropped_measures)
+            # WP9 E1: 英数字の語の内側（ICBK80L・S-500ml）。直前の量・個数に続く形（500ml24本）は上の捨てた数の検査が
+            # 見るのでここでは残さない。x は乗算記号のことが多いので型番の一部とは見ない
+            word_inside = ((prev.isascii() and prev.isalpha() and prev != "x")
+                           or (prev == "-" and a > 1 and s[a - 2].isascii() and s[a - 2].isalnum()))
+            if word_inside and not after_prev:
+                ident = _identity(m, counters, units)
+                if ident is not None:
+                    embedded.append(ident)
             continue
         if skipped:
             # 「6個以上」「6個まで」「3個から」の数は購入条件・上限・下限で個数ではない。ただし捨てた数としては
@@ -379,6 +429,9 @@ def _tokens(s: str, flags: list[str], dropped: list[float],
                     if link:
                         flags.append("dropped_link")
                     continue
+            if _in_bundle_list(s, a, m.end()):
+                flags.append("bundle_list")             # WP9 E2: 構成品の個数は商品全体の個数ではない（P0: low）
+                continue
             toks.append(_Tok("count", a, m.end(), n=int(value), word=word,
                              mult=mults.get(key, 1), solo_low=key in solo_low))
     taken = {t.start for t in toks}
@@ -560,11 +613,19 @@ def parse_quantity(text: str, basis: str | None = None) -> QuantityInfo:
     flags: list[str] = []
     dropped: list[float] = []
     dropped_measures: list[tuple[str, float]] = []
-    toks = _tokens(s, flags, dropped, dropped_measures)
+    embedded: list[tuple] = []
+    toks = _tokens(s, flags, dropped, dropped_measures, embedded)
     if flags or _unknown_counter(s, toks):
         return _low(s.strip()[:80])
     if not toks:
         return _none()
+    # WP9 E1: 採用した量と同じ表記（80L）が、英数字の語（ICBK80L）の内側にも現れる。独立した量なのか型番の一部なのか
+    # 決められないので low（P0）。型番だけの題名（独立した 80L が無い）は従来どおり量にしない
+    if embedded:
+        seen = {("measure", t.dim, round(t.n, 9)) if t.kind == "measure" else ("count", t.word, int(t.n))
+                for t in toks if t.kind in ("measure", "count")}
+        if any(e in seen for e in embedded):
+            return _low(s.strip()[:80])
     # 「30回分」は使用回数・換算の説明。計量値や他の個数があれば数えない（S1）
     if any(t.kind == "count" and t.word in SERVING_WORDS for t in toks) and any(
             t.kind == "measure" or (t.kind == "count" and t.word not in SERVING_WORDS) for t in toks):
