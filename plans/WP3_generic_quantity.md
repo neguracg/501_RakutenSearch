@@ -65,3 +65,24 @@ SPEC §1 の目的（再掲）: 「楽天で○○を条件付きで探して」
 2. WP3-2 pricing.py（basis・グループ・include/exclude・caveat）。
 3. WP3-3 service・MCP・CLI・Web・regulars・README・docs/index.html を新インターフェースへ。TP 固有の語（ply・倍巻き・ロール既定）が core（src/shopping 配下の quantity/pricing/service/mcp_server/web*）に残っていないことを grep で確認して報告。
 4. 全試験＋ブラインド新旧の扱いを報告。uvicorn 実起動（SHOPPING_MOCK=1・BASE_PATH=/kaimono）で 洗剤/電池 系のモック比較が 200 で出ること・/mcp の compare_offers が通ることを確認し、停止。モックデータ（mock_data.json）にも3カテゴリ以上の架空商品を入れる。
+
+## 確定した契約（tester の Q0〜Q17 への回答。SPEC §7・§8 に同じ文面で入れる）
+
+- Q0 `pricing.compare` は `Offer.quantity` が入っていればそれを使い、無ければ `parse_quantity(item_name)` で読む。
+- Q1 結果は dataclass `Comparison`: `basis`（正規化後の基準単位 "ml"/"g"/"m"/"W"/"mAh"/"Wh"/"個"）・`basis_label`（表示単位。例 "100mlあたり"）・`groups: list[ComparisonGroup]`（各 `basis`・`dimension`・`offers`。単位価格の安い順）・`unknown_offers: list[Offer]`（basis の量が読めない候補）・`cheapest_price`・`cheapest_unit_price`・`cheapest_total`・`cheapest_for_quantity`（各 Offer または None）・`caveats: list[str]`・`notes: list[str]`。service はこれを同じキー名の dict にする。
+- Q2 最安スロット名は上の4つ（`cheapest_price` / `cheapest_unit_price` / `cheapest_total` / `cheapest_for_quantity`）。
+- Q3 `Offer.unit_price` は**表示単位あたり**の値（例: 100mlあたりの円）。`Offer.unit_price_label` は空白なしの "100mlあたり"・"100gあたり"・"1mあたり"・"1Wあたり"・"1mAhあたり"・"1Whあたり"・"1個あたり"。比較は丸める前の値。
+- Q4 basis「個」のラベルは常に "1個あたり"。
+- Q5 数え語が無く内容量だけある（例「2L」）→ count_total=1・count_unit="個"・confidence=high。数え語も内容量も無い→ none。
+- Q6 数え語が2段のとき count_unit は内側（1つめ。「12ロール×4パック」なら "ロール"）。
+- Q7 自動判定の「過半」は confidence=high の候補を分母にし、**半数を超える**時だけ（ちょうど半数は「個」）。
+- Q8 単価不明は `unknown_offers` に入れ、どのグループにも入れず `unit_price=None`。件数を caveats に「単価を出せない候補: N件」。
+- Q9 「個」グループの dimension は "count"。
+- Q10 `desired_quantity` は basis の単位（L・kg 等の別名を basis に指定した時も基準単位 ml・g で解釈）。1商品で basis の量が desired 以上のもののうち、価格（price）が最小のもの。複数買いは考えない。
+- Q11 送料不明の候補がある時は `cheapest_total=None` とし、caveats に「送料」を含む理由を書く。
+- Q12 notes の書式は「含む語で除外: N件」「除く語で除外: N件」（0件なら出さない）。
+- Q13 内容量が無ければ measure_total=None。
+- Q14 confidence=low のとき content_dimension・content_unit も None。
+- Q15 同じ次元の値が「×」でつながる寸法表記（例「30cm×50m」「幅45cm×長さ100m」）は矛盾ではなく寸法とみなし、**大きい方**を内容量にする（ラップ・テープ・ホース等の長さ）。数え語の付かない裸の数（「34×85cm」の34）は個数にしない。
+- Q16 入力は NFKC で正規化（全角数字・全角英字）。乗算記号は ×・x・X・*。
+- Q17 換算表は quantity.py のモジュール定数 `UNITS: dict[str, tuple[str, float]]`（別名 → (次元, 基準単位への係数)）、表示単位は `DISPLAY: dict[str, tuple[float, str]]`（次元 → (表示の倍率, ラベル)）、数え語は `COUNTERS`。ここに1行足すだけで単位が増える。
