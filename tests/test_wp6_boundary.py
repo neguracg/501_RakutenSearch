@@ -71,6 +71,18 @@ def test_p5_has_one_boundary_function_and_no_per_word_exception_lists():
     assert hasattr(quantity, "_counter_boundary_ok")
     assert not hasattr(quantity, "_TEN_NOT_COUNT")
     assert not hasattr(quantity, "MONTH_COUNTERS")
+    assert not hasattr(quantity, "_P_NOT_COUNT")
+
+
+@pytest.mark.parametrize("title", ["トイレットペーパー 12ロール 10P還元", "トイレットペーパー 12ロール 5Pアップ",
+                                   "トイレットペーパー 12ロール 10PUP", "トイレットペーパー 12ロール 5P増量"])
+def test_p5_p_followed_by_a_word_is_not_a_count(title):
+    assert _cm(title)[:2] == ("high", 12)
+
+
+def test_p5_spaced_point_word_after_p_is_low_not_a_wrong_count():
+    # 「10P 還元」は直後が空白なので P5 では捨てられない。単独の NP は X1 で low（単価不明に倒す）
+    assert parse_quantity("トイレットペーパー 12ロール 10P 還元").confidence == "low"
 
 
 @pytest.mark.parametrize("title", ["サプリ 90粒 12ヶ月保証", "洗剤 900g×6 3点以上でポイント5倍", "洗剤 900g×6 2点購入"])

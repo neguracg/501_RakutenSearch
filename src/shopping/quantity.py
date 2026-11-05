@@ -228,7 +228,6 @@ def _token_re(unit_keys: tuple[str, ...], counter_keys: tuple[str, ...]):
 
 
 _IRI_AFTER = re.compile(r"\s*入")
-_P_NOT_COUNT = re.compile(r"\s*(?:還元|倍|up|アップ|ポイント|増量)")
 # P5: 数え語の直後に文字（かな・漢字・英字・長音）が続く時、個数にしてよいのは次の語の時だけ。それ以外
 # （お・ご・同・目・付・プ・指・刃・口・所・骨・タ・長音…）は個数にしない。語ごとの除外リストは持たない
 _COUNTER_BOUNDARY_WORDS = re.compile(r"(?:x|入|セット|パック|組|ケース|箱|袋|梱|set|pack)")
@@ -298,16 +297,16 @@ def _tokens(s: str, flags: list[str]) -> list[_Tok]:
             link = _is_link_position(s, a, m.end())
             key = m.group("counter")
             word = counters[key]
-            # 個数として採らない理由（P5 境界・小数・単独 P の上限や還元）。連結位置なら黙って捨てず low（P6）
+            # 個数として採らない理由（P5 境界・小数・単独 P の上限）。連結位置なら黙って捨てず low（P6）
             if not _counter_boundary_ok(s, m.end()) or value != int(value):
                 if link:
                     flags.append("dropped_link")
                 continue
             if key in solo_low:
-                # 単独の P だけ 1〜99・還元等でない時に個数の候補（1080P は画質）。×・入数に連結する P と、
+                # 単独の P だけ 1〜99 の時に個数の候補（1080P は画質）。×・入数に連結する P と、
                 # 直前の量に空白だけで続く P（205ml 100P）は桁の上限を掛けず数える（P6。単独扱いは X1 が low にする）
                 attached = link or bool(toks and toks[-1].kind == "measure" and not s[toks[-1].end:a].strip())
-                if _P_NOT_COUNT.match(s, m.end()) or not (attached or 1 <= value <= MAX_PACK_P):
+                if not (attached or 1 <= value <= MAX_PACK_P):
                     if link:
                         flags.append("dropped_link")
                     continue
