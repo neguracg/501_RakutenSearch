@@ -206,7 +206,9 @@ S1〜S11・W1〜W5 との整理（矛盾箇所の注記）:
 - S8 の判定関数は `inputs.fits_limit`（UTF-8 のバイト数）。除外語（ng_keyword）は全体で判定し、語数（5語）は別に数える。
 - S9 の絞り込みは `pricing.filter_by_terms`（compare と同じ関数）。MCP の search_products は `include_terms`/`exclude_terms` を受ける。
 - S10 の整形は `quantity.format_amount`（整数は千区切り、小数は末尾の 0 を落とす）と `format_unit_price`（2→3→4 桁）。JSON の `unit_price` も同じ桁数で丸める。
-- basis と desired_quantity の検査は `inputs.check_basis`・`inputs.check_desired_quantity` に一本化し、service・pricing はそれを呼ぶだけ（不正は InvalidInput＝ValueError）。
+- basis と desired_quantity の検査は `inputs.check_basis`・`inputs.check_desired_quantity` に一本化し、service・pricing・regulars（定番品マスタの desired_quantity）はそれを呼ぶだけ（不正は InvalidInput＝ValueError）。
+- S5 の結果: 各候補に `unit_price_dimension`（単位価格に使った量の次元。count / volume / mass …。単価を出せない候補は null）と、`quantity.content_amounts`（名前に書かれた全次元 → 1個あたり内容量）を出す。basis を明示した時に、名前の先頭の次元ではなくどの次元で比べたかが結果から分かる。
+- 単価の桁数は `quantity.unit_price_digits` の1つの実装（JSON の `round_unit_price` と表示の `format_unit_price` が呼ぶ。S10）。
 
 ## 9. 定番品マスタ（regulars.py）
 

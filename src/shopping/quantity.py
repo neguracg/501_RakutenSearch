@@ -185,12 +185,23 @@ def format_amount(x: float | None) -> str:
     return f"{x:,.9f}".rstrip("0").rstrip(".")
 
 
-def format_unit_price(x: float) -> str:
-    """単価の表示（円）。2 桁で 0.00 になってしまう小さな正の値は有効数字が出るまで小数を増やす（最大 4 桁）。"""
-    for digits in (2, 3, 4):
+def unit_price_digits(x: float) -> int:
+    """単価の小数桁数（唯一の実装）。通常は 2 桁。2 桁で 0.00 になってしまう小さな正の値は有効数字が出るまで
+    増やす（最大 4 桁。S10）。"""
+    for digits in (2, 3):
         if x <= 0 or round(x, digits) != 0:
-            return f"{x:,.{digits}f}"
-    return f"{x:,.4f}"
+            return digits
+    return 4
+
+
+def round_unit_price(x: float | None) -> float | None:
+    """JSON など数値で出す単価の丸め（桁数は unit_price_digits）。"""
+    return None if x is None else round(x, unit_price_digits(x))
+
+
+def format_unit_price(x: float) -> str:
+    """単価の表示（円）。桁数は unit_price_digits。"""
+    return f"{x:,.{unit_price_digits(x)}f}"
 
 
 # ---- 読み取り ----
@@ -367,7 +378,8 @@ def _joins(s: str, p: _Tok, t: _Tok, g: _Group, flags: list[str],
         if "入" in gap or (t.word in CONTAINERS and all(f.word != t.word for f in facs)):
             return True
         # 外側「5箱」のあとに内側「60個入」が来る順は、W1（内側→外側）とは逆で、積か説明か決められない
-        if p.n != 1 and _IRI_AFTER.match(s, t.end) and not _IRI_AFTER.match(s, p.end):
+        if (len(facs) == 1 and p.n != 1 and _IRI_AFTER.match(s, t.end)
+                and not _IRI_AFTER.match(s, p.end)):
             flags.append("ambiguous")
             return False
         # ×の無い2段の数え語「500枚 5冊」「12本入り 2ダース」（W1）。先頭が 1 の「1箱 24本」は

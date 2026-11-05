@@ -16,7 +16,7 @@ from .models import Offer, SearchStats
 from .orchestrator import Limits, search_many
 from .inputs import InvalidInput, check_basis, check_desired_quantity
 from .pricing import Comparison, compare, filter_by_terms, total_price
-from .quantity import parse_quantity
+from .quantity import parse_quantity, round_unit_price
 from .regulars import Regular, RegularsError, get_regular
 
 SOURCE = "楽天市場（楽天ウェブサービス）"
@@ -55,16 +55,6 @@ def _error(kind: str, message: str, **extra) -> dict:
     return out
 
 
-def _round_price(x: float | None) -> float | None:
-    """単価の丸め: 通常は小数 2 桁。2 桁で 0 になる小さな正の値は有効数字が出るまで増やす（最大 4 桁。S10）。"""
-    if x is None:
-        return None
-    for digits in (2, 3, 4):
-        if x <= 0 or round(x, digits) != 0:
-            return round(x, digits)
-    return round(x, 4)
-
-
 def offer_to_dict(offer: Offer, known_urls: list[str] | None = None) -> dict:
     q = offer.quantity
     d = {
@@ -90,9 +80,11 @@ def offer_to_dict(offer: Offer, known_urls: list[str] | None = None) -> dict:
             "count_total": q.count_total, "count_unit": q.count_unit,
             "content_amount": q.content_amount, "content_dimension": q.content_dimension,
             "content_unit": q.content_unit, "measure_total": q.measure_total,
-            "confidence": q.confidence, "evidence": q.evidence},
-        "unit_price": _round_price(offer.unit_price),
+            "confidence": q.confidence, "evidence": q.evidence,
+            "content_amounts": dict(q.content_amounts or {})},
+        "unit_price": round_unit_price(offer.unit_price),
         "unit_price_label": offer.unit_price_label,
+        "unit_price_dimension": offer.unit_price_dimension,
     }
     if known_urls is not None:
         d["is_known_url"] = offer.item_url in known_urls

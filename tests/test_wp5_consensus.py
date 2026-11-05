@@ -184,3 +184,63 @@ def test_new_counters_are_in_the_table():
 def test_hostile_long_inputs_stay_fast_and_do_not_raise():
     text = "1個 " * 1000
     assert parse_quantity(text).confidence in ("none", "low", "high")
+
+
+# --- B: S5 明示 basis の時、比べた次元を結果に出す ------------------------------------------
+
+def _offer(code, name, price=3000):
+    from shopping.models import Offer
+    return Offer(mall="rakuten", mall_item_code=code, item_name=name, price=price,
+                 item_url=f"https://item.rakuten.co.jp/s/{code}/", item_url_status="ok",
+                 shipping_status="included")
+
+
+def test_s5_result_says_which_dimension_the_unit_price_used():
+    from shopping.pricing import compare
+    from shopping.service import offer_to_dict
+    offers = [_offer("a", "モバイルバッテリー 10000mAh 22.5W")]
+    for basis, dim, label in [("mAh", "charge", "1mAhあたり"), ("W", "power", "1Wあたり"),
+                              ("個", "count", "1個あたり"), (None, "charge", "1mAhあたり")]:
+        compare(offers, basis=basis)
+        d = offer_to_dict(offers[0])
+        assert d["unit_price_dimension"] == dim and d["unit_price_label"] == label
+        assert d["quantity"]["content_amounts"] == {"charge": 10000.0, "power": 22.5}
+
+
+def test_s5_unknown_unit_price_has_no_dimension():
+    from shopping.pricing import compare
+    from shopping.service import offer_to_dict
+    offers = [_offer("a", "洗剤 詰め替え")]
+    compare(offers, basis="ml")
+    assert offer_to_dict(offers[0])["unit_price_dimension"] is None
+
+
+# --- C1: 単価の丸めは 1 つの実装 ------------------------------------------------------------
+
+def test_c1_json_rounding_and_display_share_one_digit_rule():
+    from shopping import service
+    from shopping.quantity import format_unit_price, round_unit_price, unit_price_digits
+    assert not hasattr(service, "_round_price")
+    for x in (123.456, 0.004, 0.0004, 0.00004, 5.0, 0.0):
+        assert format_unit_price(x) == f"{round_unit_price(x):,.{unit_price_digits(x)}f}"
+    assert round_unit_price(0.004) == 0.004 and round_unit_price(123.456) == 123.46
+    assert round_unit_price(None) is None
+
+
+# --- C3: regulars の desired_quantity は inputs の検査と同じ -------------------------------
+
+@pytest.mark.parametrize("value,ok", [(18000, True), (1.5, True), (0, False), (-1, False),
+                                      (True, False), ("3", False), (float("inf"), False), (10**13, False)])
+def test_c3_regulars_desired_quantity_uses_the_shared_check(value, ok):
+    from shopping.regulars import RegularsError, _parse_one
+    entry = {"id": "x", "name": "x", "keywords": ["x"], "desired_quantity": value}
+    if ok:
+        assert _parse_one(entry, 0).desired_quantity == value
+    else:
+        with pytest.raises(RegularsError):
+            _parse_one(entry, 0)
+
+
+def test_p0_single_description_only_forgives_the_same_counter_as_the_inner_one():
+    assert high_count("12ロール×4袋 12ロール入り") == 48
+    assert high_count("12ロール×4パック 12冊") == "low"

@@ -158,6 +158,7 @@ def compare(offers: list[Offer], include_terms=None, exclude_terms=None,
             o.quantity = parse_quantity(o.item_name)
         o.unit_price = None
         o.unit_price_label = None
+        o.unit_price_dimension = None
 
     name, dim = fixed if fixed else _auto_basis(candidates)
     mult, label = DISPLAY[dim]
@@ -174,6 +175,7 @@ def compare(offers: list[Offer], include_terms=None, exclude_terms=None,
         if o.price is not None:
             o.unit_price = o.price * mult / amount
             o.unit_price_label = label
+            o.unit_price_dimension = dim
         members.append(o)
     members.sort(key=lambda o: (o.unit_price is None, o.unit_price or 0.0,
                                 o.price if o.price is not None else 10**12, o.mall_item_code))

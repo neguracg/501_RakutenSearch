@@ -7,6 +7,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .inputs import InvalidInput, check_desired_quantity
 from .quantity import resolve_basis
 
 DEFAULT_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "regulars.json"
@@ -33,7 +34,7 @@ class Regular:
     include_terms: list[str] = field(default_factory=list)
     exclude_terms: list[str] = field(default_factory=list)
     basis: str | None = None             # "個" または 基準単位（省略で自動）
-    desired_quantity: int | None = None
+    desired_quantity: float | None = None
     known_urls: list[str] = field(default_factory=list)
     notes: str | None = None
 
@@ -74,8 +75,10 @@ def _parse_one(d: object, index: int) -> Regular:
         except ValueError:
             raise RegularsError("invalid_format", f"{rid}: basis is not a known unit") from None
     dq = d.get("desired_quantity")
-    if dq is not None and (isinstance(dq, bool) or not isinstance(dq, (int, float)) or dq <= 0):
-        raise RegularsError("invalid_format", f"{rid}: desired_quantity must be a positive number")
+    try:                                         # 検査の実装は inputs に一本化（公開面・pricing と同じ）
+        check_desired_quantity(dq)
+    except InvalidInput:
+        raise RegularsError("invalid_format", f"{rid}: desired_quantity must be a positive number") from None
     urls = d.get("known_urls", [])
     if urls is None:
         urls = []

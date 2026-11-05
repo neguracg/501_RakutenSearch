@@ -51,6 +51,9 @@ class Offer:
     # 比較（pricing.compare）が書き込む。表示単位あたりの円（丸める前）と表示用ラベル（"100mlあたり" 等）
     unit_price: float | None = None
     unit_price_label: str | None = None
+    # 単位価格に使った量の次元（count / volume / mass …）。basis を明示した時、名前に複数の次元があっても
+    # どれで比べたかが分かる（S5）。単価を出せない候補は None
+    unit_price_dimension: str | None = None
 
 
 @dataclass
