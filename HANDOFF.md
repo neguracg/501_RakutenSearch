@@ -8,13 +8,14 @@
 - 道具は商品の意味を持たない（SPEC §7・§8）。持つのは「個数×内容量の読み取りと単位換算（quantity.py の UNITS / DISPLAY / COUNTERS 表）」と「含む語・除く語での絞り込み」だけ。仕様の違い（濃縮・層数・型番・色など）は判定せず、数量は商品名からの読み取りで誤ることがある旨とあわせて、caveats に常に2行出す。
 
 ## 次にやること（順番）
-1. 改名 501_RakutenSearch → 501_ShoppingSearch（消込表 #926）。キットは `C:\Claude\102_ClaudeUnyou\unyou\rename-501_ShoppingSearch\`。腱さんがアプリを完全終了 → `rename-folder.bat` → YES。その後 `POST-RENAME-TODO.md` を消し込み、`gh repo rename 501_ShoppingSearch --yes`。
-2. VPS デプロイ（vps-deploy スキル。新規・DB なし・公開先 app.negura.website/kaimono・ホストポートは台帳で 8014 以降を払い出し）。docs/index.html は「公開準備中」にしてあるので、公開を確認してから「公開中」とリンクに戻す。
-3. #921（楽天の許可IP・アプリURL）の後に、実 API で通し確認と実題名での高信頼の誤り率の測定。
+1. ChatGPT（Plus）からの実接続（消込表 #923。腱さん）。
+2. 実題名での高信頼の誤り率の測定（公開アプリで10検索語程度。high の個数・総量を目視）と、WP7 の verifier レビュー。
+3. フォルダ改名 501_RakutenSearch → 501_ShoppingSearch（消込表 #926。他セッションが止まっている時に）。キットは `C:\Claude\102_ClaudeUnyou\unyou\rename-501_ShoppingSearch\`。腱さんがアプリを完全終了 → `rename-folder.bat` → YES。その後 `POST-RENAME-TODO.md` を消し込む（GitHub 側は改名済み）。
+4. Uptime Kuma に `http://kaimono:8000/kaimono/healthz` の監視を追加（ブラウザ操作・腱さん）。
 
 ## 待ち（腱さん・別セッション）
-- 消込表 #921 / #923 の回答待ち（内容は消込表を正とする）。
-- デプロイ: VPS 上の `/opt/apps/_tools/deploy_app.sh kaimono` を `nohup setsid` でデタッチ起動（README）。本番の `.env` に `RAKUTEN_APPLICATION_ID` / `RAKUTEN_ACCESS_KEY` が入っていないと `/healthz` が 503 になる。
+- 消込表 #923 / #926 / #927 の回答待ち（内容は消込表を正とする）。
+- 再デプロイ: VPS 上の `/opt/apps/_tools/deploy_app.sh kaimono` を `nohup setsid` でデタッチ起動（README）。本番の `.env` に `RAKUTEN_APPLICATION_ID` / `RAKUTEN_ACCESS_KEY` が入っていないと `/healthz` が 503 になる。
 - ChatGPT（Plus）から `https://app.negura.website/kaimono/mcp` への実接続は未検証（登録手順は README）。
 - 実 API を使った WP3 後の通し確認（AC12 相当）は未実施。CLI は既定がモックなので `cli.py compare ... --live` を手動で 1 回行う。
 
