@@ -1,7 +1,7 @@
 # @owns コマンドライン入口（引数解釈と人間向け表示だけ。処理は service に委譲）
 """買い物リサーチ CLI。
 
-  python cli.py search "kw1" "kw2" [--min-price N] [--max-price N] [--ng 語] [--pages N] [--mock] [--json]
+  python cli.py search "kw1" "kw2" [--include 語 ...] [--exclude 語 ...] [--min-price N] [--max-price N] [--ng 語] [--pages N] [--mock] [--json]
   python cli.py compare "kw1" ... [--include 語 ...] [--exclude 語 ...] [--basis 個|ml|g|m|W|...] [--desired-quantity N] [...]
   python cli.py regular <id> [--regulars PATH] [--mock] [--json]
 
@@ -19,13 +19,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from shopping import service  # noqa: E402
+from shopping.quantity import format_amount, format_unit_price  # noqa: E402
 
 
 def _add_search_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("keywords", nargs="+", help="検索語（1〜5個）")
     p.add_argument("--min-price", type=int)
     p.add_argument("--max-price", type=int)
-    p.add_argument("--ng", dest="ng_keyword", help="除外語")
+    p.add_argument("--ng", dest="ng_keyword", help="楽天側の除外語")
+    p.add_argument("--include", nargs="+", metavar="語", help="商品名に全て含む語（例: 詰め替え 単3）")
+    p.add_argument("--exclude", nargs="+", metavar="語", help="商品名に含んだら外す語")
     p.add_argument("--sort", default="standard")
     p.add_argument("--pages", type=int, default=1, help="語ごとのページ数（最大3）")
     _add_common(p)
@@ -46,8 +49,6 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--max-results", type=int, default=30)
     c = sub.add_parser("compare", help="同じ仕様どうしで比較して最安を出す")
     _add_search_args(c)
-    c.add_argument("--include", nargs="+", metavar="語", help="商品名に全て含む語（例: 詰め替え 単3）")
-    c.add_argument("--exclude", nargs="+", metavar="語", help="商品名に含んだら外す語")
     c.add_argument("--basis", help="比べる単位: 個 / ml / g / m / W / mAh / Wh（L・kg 等の別名も可）。省略で自動")
     c.add_argument("--desired-quantity", type=float, help="必要な量（basis の単位）")
     r = sub.add_parser("regular", help="定番品マスタの id で今の最安を調べる")
@@ -71,11 +72,12 @@ def _qty(o: dict) -> str:
     q = o.get("quantity") or {}
     if q.get("confidence") != "high":
         return "数量不明" if q.get("confidence") == "none" else "数量要確認"
-    text = f"{q['count_total']}{q['count_unit']}"
+    text = f"{format_amount(q['count_total'])}{q['count_unit']}"
     if q.get("content_amount") is not None:
-        text += f" × {q['content_amount']:g}{q['content_unit']}（計 {q['measure_total']:g}{q['content_unit']}）"
+        text += (f" × {format_amount(q['content_amount'])}{q['content_unit']}"
+                 f"（計 {format_amount(q['measure_total'])}{q['content_unit']}）")
     up = o.get("unit_price")
-    return text + (f"（{o['unit_price_label']} {up:,.2f}円）" if up is not None else "")
+    return text + (f"（{o['unit_price_label']} {format_unit_price(up)}円）" if up is not None else "")
 
 
 def _offer_line(o: dict) -> str:
@@ -143,7 +145,8 @@ def run(argv: list[str] | None = None) -> int:
         result = service.search_products(
             args.keywords, ng_keyword=args.ng_keyword, min_price=args.min_price,
             max_price=args.max_price, sort=args.sort, pages=args.pages,
-            max_results=args.max_results, adapter=adapter)
+            max_results=args.max_results, include_terms=args.include, exclude_terms=args.exclude,
+            adapter=adapter)
         render = render_search
     elif args.command == "compare":
         result = service.compare_offers(

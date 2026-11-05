@@ -183,7 +183,7 @@ item_url（商品固有 URL）, fetched_at（ISO8601・JST）, quantity（§7）
 - INSTRUCTIONS・ツール説明は特定カテゴリを前提にしない。「include_terms に仕様（例: 『詰め替え』『ダブル』『単3』）を入れる」「仕様差の判定は AI 側の責任」を明記し、例は3カテゴリ以上。
 - **stdio MCP と CLI の既定はモック**（架空データ。API を呼ばない）。実 API は CLI の `--live`、stdio MCP の環境変数 `SHOPPING_LIVE=1` を明示した時だけ（§11）。`SHOPPING_MOCK=1` / `--mock` は互換のため残す（明示のモックは常に勝つ）。公開Web は実 API が既定（鍵が無ければ起動しても `/healthz` が 503）。
 - 公開リモートMCP: `{BASE}/mcp`（Streamable HTTP・stateless・JSON 応答・認証なし）。ツールは `search_products` と `compare_offers` の 2 つだけ（`find_regular_item` は出さない）。流量保護（直列化・キャッシュ・IP別回数制限）は Web と共通（guard.py）。pages は 1 に固定。`GET {BASE}/mcp`（と DELETE）は 405（`Allow: POST`。stateless・JSON 応答のため SSE ストリームを開かない）。
-- 公開面の入力検査（guard.Gate.admit → inputs.validate。Web と MCP が同じ関数を通る）: 検索語・含む語・除く語・楽天側の除外語はそれぞれ 1〜5 語（除外語は空白区切り）、1 語の長さは楽天の上限（半角128文字）に合わせ全角=2・半角=1で数えて 128 まで（利用者向けの文言は「全角64文字（半角128文字）」）、価格は 0〜10,000,000 の整数、`sort` は楽天公式の値（standard / ±affiliateRate / ±reviewCount / ±reviewAverage / ±itemPrice / ±updateTimestamp）、`basis` は換算表の別名か「個」、`desired_quantity` は有限の正数。ロック取得・最小間隔のスリープ・API 呼び出しより前に検査し、弾いた入力は API 枠も IP 別回数も消費しない。MCP は不正入力を `invalid_request` のエラー結果（クレジット付き）で返す。入力値そのものはメッセージに入れない。
+- 公開面の入力検査（guard.Gate.admit → inputs.validate。Web と MCP が同じ関数を通る）: 検索語・含む語・除く語・楽天側の除外語はそれぞれ 1〜5 語（除外語は空白区切り）、1 語の長さは楽天の上限（半角128文字）を安全側に解釈し UTF-8 で 128 バイト以内（利用者向けの文言は「全角42文字（半角128文字）」。S8。判定は Gate とアダプタが同じ `inputs.fits_limit`）、価格は 0〜10,000,000 の整数、`sort` は楽天公式の値（standard / ±affiliateRate / ±reviewCount / ±reviewAverage / ±itemPrice / ±updateTimestamp）、`basis` は換算表の別名か「個」、`desired_quantity` は有限の正数。ロック取得・最小間隔のスリープ・API 呼び出しより前に検査し、弾いた入力は API 枠も IP 別回数も消費しない。MCP は不正入力を `invalid_request` のエラー結果（クレジット付き）で返す。入力値そのものはメッセージに入れない。
 - ChatGPT（Plus）からの実接続は未検証（登録手順は README）。
 
 ## 11. 規約（運用方針）
@@ -234,5 +234,5 @@ item_url（商品固有 URL）, fetched_at（ISO8601・JST）, quantity（§7）
 | AC-W7 | BASE_PATH 有り/無しの両方で全ルート・リンクが通る。`{BASE}/healthz` が 200（認証情報が無いと 503。モック運用は 200） |
 | AC-W8 | 定番品（個人の購入リスト）を公開Webに出さない。Cookie・個人情報を保存しない |
 | AC-W9 | `{BASE}/mcp`（Streamable HTTP・認証なし）で MCP の initialize・tools/list・compare_offers が通り、公開するツールは search_products と compare_offers の2つだけ。結果に credit を含み、流量保護は Web と共通。`GET {BASE}/mcp` は 405 |
-| AC-W10 | 検索語・含む語・除く語・除外語の語数と長さ（半角128文字＝全角64文字）、価格の範囲、`sort`・`basis` の許可値を Web と MCP が同じ検査で弾く。弾いた入力は API 枠・IP 別回数を消費せず、MCP はクレジット付きのエラー結果を返す。Unicode 数字（①²）で 500 にならない |
+| AC-W10 | 検索語・含む語・除く語・除外語の語数と長さ（UTF-8 で 128 バイト以内＝半角128文字・全角42文字）、価格の範囲、`sort`・`basis` の許可値を Web と MCP が同じ検査で弾く。弾いた入力は API 枠・IP 別回数を消費せず、MCP はクレジット付きのエラー結果を返す。Unicode 数字（①²）で 500 にならない |
 | AC-W11 | stdio MCP と CLI は既定でモック（実 API は `SHOPPING_LIVE=1` / `--live` の明示時だけ）。公開Web は実 API が既定 |

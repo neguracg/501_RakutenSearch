@@ -21,7 +21,7 @@ from .guard import Gate, RateLimited, client_ip_var, pick_client_ip
 from .inputs import MAX_PRICE, InvalidInput
 from .mcp_server import build_server
 from .orchestrator import Limits
-from .web_view import group_title, render
+from .web_view import BASIS_UNUSED_NOTE, group_title, render
 
 PAGES = 1
 HITS = 30
@@ -155,7 +155,8 @@ def create_app(base_path: str | None = None, gate: Gate | None = None) -> FastAP
         if mode == "compare":
             result = service.compare_offers(keywords, inc, exc_terms, None, basis_arg, **common)
         else:
-            result = service.search_products(keywords, max_results=HITS, **common)
+            result = service.search_products(keywords, max_results=HITS, include_terms=inc,
+                                             exclude_terms=exc_terms, **common)
         if not result.get("ok"):
             kind = (result.get("error") or {}).get("kind", "")
             if kind in _BUSY_KINDS:
@@ -166,8 +167,11 @@ def create_app(base_path: str | None = None, gate: Gate | None = None) -> FastAP
                 return _message(request, 400, "入力を確認してください", "検索条件を確認してください。")
             return _message(request, 503, "検索できませんでした",
                             "現在検索できません。しばらくしてからもう一度お試しください。")
+        notes = list(result["notes"])
+        if mode == "search" and basis_arg:
+            notes.append(BASIS_UNUSED_NOTE)        # S9: 一覧では比べる単位を使わない
         ctx = dict(mode=mode, keywords=result["keywords"], mock=result["mock"],
-                   notes=result["notes"], form=form)
+                   notes=notes, form=form)
         if mode == "compare":
             c = result["comparison"]
             ctx.update(caveats=c["caveats"], basis_label=c["basis_label"],
@@ -187,8 +191,9 @@ def create_app(base_path: str | None = None, gate: Gate | None = None) -> FastAP
 
     @router.get("/search", response_class=HTMLResponse)
     def search(request: Request, q: str | None = None, ng: str | None = None,
-               min_price: str | None = None, max_price: str | None = None):
-        return run(request, "search", q, ng, min_price, max_price)
+               min_price: str | None = None, max_price: str | None = None,
+               include: str | None = None, exclude: str | None = None, basis: str | None = None):
+        return run(request, "search", q, ng, min_price, max_price, include, exclude, basis)
 
     @router.get("/compare", response_class=HTMLResponse)
     def compare(request: Request, q: str | None = None, ng: str | None = None,

@@ -47,7 +47,7 @@ set BASE_PATH=/kaimono
 - 流量保護（楽天 API のクォータを守る）: API 呼び出しはプロセス全体で 1 秒 1 回に直列化、同じ条件は最大 10 分キャッシュ、IP ごとに 20 回/分まで（超えると 429 の案内画面）。`RATE_LIMIT_PER_MIN` で回数を変えられる。
 - 全ページのフッターに楽天のクレジット（Supported by Rakuten Developers）と運営者の責任表示を出す。結果から出るリンクは楽天の商品ページだけ。
 - ヘルスチェック: `{BASE_PATH}/healthz`（API は呼ばない）。認証情報が無いと 503（`credentials=false`）で、本番での鍵の入れ忘れを unhealthy として検知する。モック運用（`SHOPPING_MOCK=1`）は鍵が要らないので 200。
-- 入力検査: 検索語・含む語・除く語・楽天側の除外語はそれぞれ 1〜5 語、1 語は全角64文字（半角128文字。楽天の上限）まで。価格は 0〜10,000,000。`sort` は楽天公式の値、`basis` は単位表の値だけ。弾いた入力は楽天 API の枠も IP 別回数も消費しない。
+- 入力検査: 検索語・含む語・除く語・楽天側の除外語はそれぞれ 1〜5 語、1 語は UTF-8 で 128 バイト以内（全角42文字・半角128文字。楽天の上限「半角128文字」を安全側に解釈。S8）まで。価格は 0〜10,000,000。`sort` は楽天公式の値、`basis` は単位表の値だけ。弾いた入力は楽天 API の枠も IP 別回数も消費しない。
 - `GET {BASE_PATH}/mcp` は 405（stateless・JSON 応答のため SSE を開かない。`POST` だけ受ける）。
 
 Docker（VPS 用）: `Dockerfile` と `docker-compose.prod.yml`（サービス `kaimono`、external network `internal`、ポート公開なし）。VPS 上の `.env`（git 管理外・600）に `BASE_PATH=/kaimono` `PUBLIC_BASE_URL=https://app.negura.website/kaimono/`（末尾スラッシュ付き） `APP_ENV=production` `RAKUTEN_APPLICATION_ID` `RAKUTEN_ACCESS_KEY` を置く（`.env.example` は秘密ファイル保護の設定で作れないため、キー名はここを正本とする）。起動・反映は VPS 上の `/opt/apps/_tools/deploy_app.sh kaimono` を `nohup setsid` でデタッチ起動する（直の `docker compose up` はフックが遮断）。イメージには `requirements.txt`（本番用）だけを入れる。試験用の `pytest` と `httpx` は `requirements-dev.txt`。
@@ -69,6 +69,7 @@ Claude・Codex など他の MCP クライアントも同じ URL を登録すれ�
 
 ```
 .venv\Scripts\python cli.py search "洗濯洗剤 詰め替え" "単3電池" --mock
+.venv\Scripts\python cli.py search "ミネラルウォーター" --include 2L --exclude 箱 --mock
 .venv\Scripts\python cli.py compare "洗濯洗剤 詰め替え" --include 詰め替え --exclude 本体 --basis g --desired-quantity 5000 --mock
 .venv\Scripts\python cli.py compare "単3電池" --basis 個 --mock
 .venv\Scripts\python cli.py compare "ミネラルウォーター" --include 2L --basis ml --mock
@@ -77,7 +78,7 @@ Claude・Codex など他の MCP クライアントも同じ URL を登録すれ�
 
 - **既定は架空データ**（`src/shopping/mock_data.json`。洗剤・電池・水・ソーラーパネル・トイレットペーパーの架空商品）で、API を呼ばない。実 API を呼ぶのは `--live`（または環境変数 `SHOPPING_LIVE=1`）を明示した時だけ（運営者の開発・試験用。SPEC §11）。`--mock` は互換のため残してある。
 - `--json` で整形済み JSON。キーワードは 1 回 5 個まで、ページは語ごとに 3 ページまで、リクエスト間隔は 1 秒以上。
-- 比較は「商品価格」「単位価格」「支払総額」「必要数量を満たす最安」を分けて出す。送料が不明な候補があると支払総額の最安は断定せず、理由を表示する。単価は `--basis`（個・ml・g・m・W・mAh・Wh。L・kg などの別名も可。省略で自動）あたりで出し、その量を読み取れない候補は「単価不明」として最安判定から外す。`--include` は商品名に全部含む語、`--exclude` は含んだら外す語。仕様の違い（濃縮・層数・型番・色など）は判定しないので、結果の商品名で確認する。
+- 比較は「商品価格」「単位価格」「支払総額」「必要数量を満たす最安」を分けて出す。送料が不明な候補があると支払総額の最安は断定せず、理由を表示する。単価は `--basis`（個・ml・g・m・W・mAh・Wh。L・kg などの別名も可。省略で自動）あたりで出し、その量を読み取れない候補は「単価不明」として最安判定から外す。`--include` は商品名に全部含む語、`--exclude` は含んだら外す語（`search` でも `compare` でも使える。数字で始まる/終わる語は別の数の途中には一致しない: `2L` は `12L`・`1.2L` に一致しない）。`--basis` は `compare` だけで使う（一覧では使わない）。数量は「N回分」を個数に数えず、「水 24本 (500ml×24)」のような言い直しを二重に掛けず、9桁を超える数や表にない数え語が個数の位置にある商品は単価不明（low）に倒す（SPEC §7）。仕様の違い（濃縮・層数・型番・色など）は判定しないので、結果の商品名で確認する。
 
 ## 使い方（MCP サーバー）
 

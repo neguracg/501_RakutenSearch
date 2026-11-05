@@ -75,8 +75,10 @@ def build_server(*, public: bool = False, gate: Gate | None = None) -> MCPServer
             "条件に合う商品を探して一覧で見たい時に使う。"
             "keywords に検索語を1〜5個（日本語可）渡すと、語ごとに検索して商品コードで重複を除いて統合する"
             "（どの語で見つかったかは matched_keywords）。"
-            "ng_keyword は除外語、min_price/max_price は税込価格の範囲（円）、"
+            "ng_keyword は楽天側の除外語、min_price/max_price は税込価格の範囲（円）、"
             "sort は standard / +itemPrice（安い順）/ -itemPrice（高い順）/ -reviewCount など。"
+            "include_terms（商品名に全部含む語）・exclude_terms（含んだら外す語）で商品名による絞り込みもできる"
+            "（compare_offers と同じ判定。数字で始まる/終わる語は別の数の途中には一致しない: 2L は 12L に一致しない）。"
             "pages は語ごとに取るページ数（1〜3、1ページ30件）。"
             "各候補に商品固有URL(url)、価格、送料区分(shipping_status: included=送料込み/"
             "separate=送料別/unknown)、数量の読み取り結果(quantity: count_total=総個数、content_amount=1個あたり内容量、"
@@ -86,11 +88,14 @@ def build_server(*, public: bool = False, gate: Gate | None = None) -> MCPServer
     def search_products(keywords: list[str], ng_keyword: str | None = None,
                         min_price: int | None = None, max_price: int | None = None,
                         sort: str = "standard", pages: int = 1,
-                        max_results: int = 30) -> dict[str, Any]:
+                        max_results: int = 30, include_terms: list[str] | None = None,
+                        exclude_terms: list[str] | None = None) -> dict[str, Any]:
         return invoke(service.search_products, keywords, ng_keyword=ng_keyword, min_price=min_price,
                       max_price=max_price, sort=sort, pages=pages, max_results=max_results,
+                      include_terms=include_terms, exclude_terms=exclude_terms,
                       check=dict(keywords=keywords, ng_keyword=ng_keyword, min_price=min_price,
-                                 max_price=max_price, sort=sort))
+                                 max_price=max_price, sort=sort, include_terms=include_terms,
+                                 exclude_terms=exclude_terms))
 
     @server.tool(
         name="compare_offers",

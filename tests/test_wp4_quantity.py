@@ -126,6 +126,8 @@ def test_s5_explicit_basis_uses_that_dimension_in_parse_and_compare():
     c = compare([o("a", name, 5000), o("b", "モバイルバッテリー 20000mAh 18W", 8000)], basis="mAh")
     assert c.basis == "mAh" and c.cheapest_unit_price.mall_item_code == "b"
     assert c.cheapest_unit_price.unit_price == pytest.approx(8000 / 20000)
+    a = next(x for x in c.groups[0].offers if x.mall_item_code == "a")      # 先頭の次元は W だが mAh で出る
+    assert a.unit_price == pytest.approx(5000 / 10000) and not c.unknown_offers
     auto = compare([o("a", name, 5000), o("b", "モバイルバッテリー 20000mAh 18W", 8000)])
     assert auto.basis == "個"          # 先頭の次元が割れる（W と mAh）ので過半にならず個
 

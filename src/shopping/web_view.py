@@ -7,7 +7,7 @@ from jinja2 import DictLoader, Environment
 from .adapters.rakuten import is_item_url
 from .credit import CREDIT_HTML, FRESHNESS_TEXT, OPERATOR_TEXT
 from .inputs import MAX_KEYWORDS, WIDTH_TEXT
-from .quantity import basis_choices
+from .quantity import basis_choices, format_amount, format_unit_price
 
 _CSS = """
 :root{--bg:#fff;--fg:#1a1a1a;--muted:#5a5a5a;--line:#d9d9d9;--card:#f6f6f6;--accent:#b00020;--warn:#7a4b00;--warnbg:#fff4e0}
@@ -73,6 +73,7 @@ _TEMPLATES = {
 <option value="">自動（商品名から読み取れる量で決める）</option>
 {% for b in bases %}<option value="{{ b }}"{% if form.basis == b %} selected{% endif %}>{{ b }}あたり</option>
 {% endfor %}</select>
+<div class="hint">比べる単位は「比較する」でだけ使います（「一覧で見る」では使いません）。含む語・除く語は、どちらでも使います。</div>
 <div class="row">
 <div><label for="min_price">価格の下限（円）</label><input id="min_price" name="min_price" inputmode="numeric" value="{{ form.min_price }}"></div>
 <div><label for="max_price">価格の上限（円）</label><input id="max_price" name="max_price" inputmode="numeric" value="{{ form.max_price }}"></div>
@@ -137,6 +138,8 @@ _TEMPLATES = {
 {% endblock %}""",
 }
 
+BASIS_UNUSED_NOTE = "比べる単位は一覧では使っていません。単位あたりの単価で比べるには「比較する」を使ってください。"
+
 _env = Environment(loader=DictLoader(_TEMPLATES), autoescape=True)
 
 
@@ -153,11 +156,12 @@ def _qty(o: dict) -> str:
     q = o.get("quantity") or {}
     if q.get("confidence") != "high":
         return "数量不明" if q.get("confidence") == "none" else "数量要確認"
-    text = f"{q['count_total']}{q['count_unit']}"
+    text = f"{format_amount(q['count_total'])}{q['count_unit']}"
     if q.get("content_amount") is not None:
-        text += f" × {q['content_amount']:g}{q['content_unit']}（計 {q['measure_total']:g}{q['content_unit']}）"
+        text += (f" × {format_amount(q['content_amount'])}{q['content_unit']}"
+                 f"（計 {format_amount(q['measure_total'])}{q['content_unit']}）")
     up = o.get("unit_price")
-    return text + (f"／{o['unit_price_label']} {up:,.2f}円" if up is not None else "")
+    return text + (f"／{o['unit_price_label']} {format_unit_price(up)}円" if up is not None else "")
 
 
 def _safe_url(o: dict) -> bool:
