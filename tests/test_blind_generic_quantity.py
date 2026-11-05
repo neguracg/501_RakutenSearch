@@ -901,3 +901,336 @@ class TestHelpersSelfCheck:
         assert 1000 / 3000 * 100 == pytest.approx(33.3333, rel=1e-5)
         assert round(1000 / 3000 * 100, 2) == round(3333 / 10000 * 100, 2)  # 丸めると同点
         assert 3333 / 10000 < 1000 / 3000  # 生の値では B が安い
+
+
+# ==========================================================================
+# WP4-0 追記: plans/WP4_quantity_hardening.md の S1〜S11（上の既存試験は変えない）
+# 新しい Q（未確定）:
+#   W1 S4 「コピー用紙 500枚 5冊」「鉛筆 12本入り 2ダース」の期待値が一意に決まらない
+#      （総数 2500 か 5 か low か）。→ 「500 や 12 だけを high で返さない」弱い形だけ固定。
+#   W2 S4 の P/pc/pcs/ダース の count_unit が元の綴りか「個」か → count_total だけ固定。
+#   W3 S8(UTF-8 128バイトの Gate/アダプタ共通関数)・S9(一覧での含む語/除く語)・S10(指数表記を
+#      使わない表示・単価の小数桁)は関数名/画面の形が契約に無く、ここでは試験しない（implementer
+#      の自作試験で固定する）。
+#   W4 S11 「import 時に例外」は表を壊して再 import しないと確かめられない → 静的な整合
+#      (UNITS の全次元が DISPLAY にある・NFKC 後に重複キーが無い)だけ固定。
+#   W5 S7 数字で終わる語の「後ろ」判定は数字のみ試験（小数点は試験しない）。
+# ==========================================================================
+
+# --- S1 〜分は個数に数えない --------------------------------------------------
+
+S1_WITH_MEASURE = [
+    # (text, count_total, dimension, unit, content, measure)
+    ("プロテイン 1kg 約33回分", 1, "mass", "g", 1000, 1000),
+    ("洗剤 900g 約50回分", 1, "mass", "g", 900, 900),
+    ("サプリ 150g 60日分", 1, "mass", "g", 150, 150),
+    ("酵素ドリンク 500ml 30杯分", 1, "volume", "ml", 500, 500),
+    ("粉ミルク 800g 20食分", 1, "mass", "g", 800, 800),
+    ("洗濯洗剤 詰め替え 900g×6袋 約50回分", 6, "mass", "g", 900, 5400),
+]
+
+
+@pytest.mark.parametrize(
+    "text,count,dim,unit,amount,measure", S1_WITH_MEASURE, ids=[c[0] for c in S1_WITH_MEASURE]
+)
+def test_s1_bunn_is_not_counted_when_measure_exists(text, count, dim, unit, amount, measure):
+    q = _parse(text)
+    assert _conf(q) == "high", text
+    assert q.count_total == count
+    assert q.content_dimension == dim and q.content_unit == unit
+    assert q.content_amount == pytest.approx(amount)
+    assert q.measure_total == pytest.approx(measure)
+
+
+def test_s1_kaibun_alone_counts_as_pieces():
+    # S1: 計量値が1つも無く「〜回分」だけ → 個数として数える
+    q = _parse("ジェルボール 30回分")
+    assert _conf(q) == "high"
+    assert q.count_total == 30
+    assert q.content_amount is None and q.measure_total is None
+
+
+def test_s1_protein_compare_cheapest_is_2kg():
+    # 回分を個数に数えていた旧挙動では最安が狂う。100gあたり:
+    # 1kg 3500/1000*100=350, 2kg 6000/2000*100=300, 3kg 9900/3000*100=330, 500g 2000/500*100=400
+    p1 = "プロテイン 1kg 約33回分"
+    p2 = "プロテイン 2kg 約66回分"
+    p3 = "プロテイン 3kg 約100回分"
+    p4 = "プロテイン 500g 約16回分"
+    r = _compare([_offer(p1, 3500), _offer(p2, 6000), _offer(p3, 9900), _offer(p4, 2000)])
+    _assert_single_group(r, (p1, p2, p3, p4), "g", "mass", "100gあたり")
+    _assert_up(r, p1, 350)
+    _assert_up(r, p2, 300)
+    _assert_up(r, p3, 330)
+    _assert_up(r, p4, 400)
+    assert r.cheapest_unit_price.item_name == p2
+    assert _names(r.groups[0].offers) == [p2, p3, p1, p4]
+
+
+# --- S2 二重に掛けない --------------------------------------------------------
+
+S2_CASES = [
+    # (text, count_total, count_unit, content_amount, measure_total)
+    ("水 24本 (500ml×24)", 24, "本", 500, 12000),
+    ("水 24本（500ml×24）", 24, "本", 500, 12000),
+    ("水 24本 【500ml×24】", 24, "本", 500, 12000),
+    ("米 2袋 (5kg×2)", 2, "袋", 5000, 10000),
+    ("洗剤 6袋 900g×6", 6, "袋", 900, 5400),
+]
+
+
+@pytest.mark.parametrize("text,count,cunit,amount,measure", S2_CASES, ids=[c[0] for c in S2_CASES])
+def test_s2_restated_breakdown_is_not_multiplied_twice(text, count, cunit, amount, measure):
+    q = _parse(text)
+    assert _conf(q) == "high", text
+    assert q.count_total == count
+    assert q.count_unit == cunit
+    assert q.content_amount == pytest.approx(amount)
+    assert q.measure_total == pytest.approx(measure)
+
+
+def test_s2_restated_and_plain_offers_have_equal_unit_price():
+    # 2400円/12000ml*100 = 20 が言い直しの有無によらず同じ
+    a, b = "水 24本 (500ml×24)", "水 500ml×24本"
+    r = _compare([_offer(a, 2400), _offer(b, 2400)])
+    _assert_up(r, a, 20)
+    _assert_up(r, b, 20)
+
+
+# --- S3 総量併記 --------------------------------------------------------------
+
+S3_CASES = [
+    # 大きい方 = 小さい方 × 個数 → 総量併記（矛盾ではない）
+    ("米 10kg (5kg×2袋)", 2, "袋", 5000, 10000),
+    ("米 5kg×2袋 計10kg", 2, "袋", 5000, 10000),
+    ("ソーラーパネル 200W×2枚 計400W", 2, "枚", 200, 400),
+    ("ドッグフード 7.5kg(2.5kg×3袋)", 3, "袋", 2500, 7500),
+]
+
+
+@pytest.mark.parametrize("text,count,cunit,amount,measure", S3_CASES, ids=[c[0] for c in S3_CASES])
+def test_s3_total_alongside_breakdown_is_not_a_conflict(text, count, cunit, amount, measure):
+    q = _parse(text)
+    assert _conf(q) == "high", text
+    assert q.count_total == count
+    assert q.count_unit == cunit
+    assert q.content_amount == pytest.approx(amount)
+    assert q.measure_total == pytest.approx(measure)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "米 12kg (5kg×2袋)",  # 5*2=10 != 12
+        "ソーラーパネル 200W×2枚 計500W",  # 200*2=400 != 500
+        "ドッグフード 8kg(2.5kg×3袋)",  # 7.5 != 8
+    ],
+)
+def test_s3_mismatching_total_is_still_low(text):
+    q = _parse(text)
+    assert _conf(q) == "low", text
+    assert q.count_total is None and q.content_amount is None and q.measure_total is None
+
+
+def test_s3_rice_compare_unit_price():
+    # 4000/10000*100=40, 2200/5000*100=44
+    a, b = "米 10kg (5kg×2袋)", "米 5kg×1袋"
+    r = _compare([_offer(a, 4000), _offer(b, 2200)])
+    _assert_up(r, a, 40)
+    _assert_up(r, b, 44)
+    assert r.cheapest_unit_price.item_name == a
+
+
+# --- S4 数え語の追加と未知の数え語 ---------------------------------------------
+
+S4_CASES = [
+    # (text, count_total, count_unit or _UNSET)
+    ("トイレットペーパー 12ロール×4P", 48, "ロール"),
+    ("ティッシュ 5箱×12P", 60, "箱"),
+    ("単3電池 8本入×3P", 24, "本"),
+    ("ボールペン 2pcs", 2, _UNSET),
+    ("ボールペン 3pc", 3, _UNSET),
+    ("ティッシュ 12P", 12, _UNSET),
+    ("鉛筆 2ダース", 24, _UNSET),  # ダース=12倍
+    ("鉛筆 1ダース", 12, _UNSET),
+    ("ノート 5冊", 5, "冊"),
+    ("靴下 3ペア", 3, "ペア"),
+    ("ケーキ 6ヶ", 6, "ヶ"),
+    ("ギフト 5点", 5, "点"),
+]
+
+
+@pytest.mark.parametrize("text,count,cunit", S4_CASES, ids=[c[0] for c in S4_CASES])
+def test_s4_new_counters(text, count, cunit):
+    q = _parse(text)
+    assert _conf(q) == "high", text
+    assert q.count_total == count
+    if cunit is not _UNSET:
+        assert q.count_unit == cunit
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "洗濯洗剤 900g×6ブロック",  # ×の後の未知の数え語
+        "石鹸 4ブロック×6個",  # ×の前
+        "石鹸 6ブロック入り×4",  # 入数の直後
+    ],
+)
+def test_s4_unknown_counter_in_count_position_is_low(text):
+    q = _parse(text)
+    assert _conf(q) == "low", text
+    assert q.count_total is None and q.measure_total is None
+
+
+def test_s4_copy_paper_and_pencil_are_never_silently_wrong():
+    # W1: 一意な期待値が決まらない実例。片方の数だけを high で返すことだけ禁止する
+    q = _parse("コピー用紙 500枚 5冊")
+    assert _conf(q) in ("high", "low")
+    if _conf(q) == "high":
+        assert q.count_total != 500
+    q = _parse("鉛筆 12本入り 2ダース")
+    assert _conf(q) in ("high", "low")
+    if _conf(q) == "high":
+        assert q.count_total in (24, 288)
+
+
+# --- S5 明示 basis は複数次元の中からその次元を使う --------------------------------
+
+
+def test_s5_parse_keeps_first_dimension():
+    q = _parse("モバイルバッテリー 22.5W 10000mAh")
+    assert q.content_dimension == "power"
+    assert q.content_amount == pytest.approx(22.5)
+
+
+def test_s5_explicit_basis_uses_that_dimension():
+    # basis=mAh: 3000/10000=0.3、5000/20000=0.25 → 2番目が最安。ラベルは 1mAhあたり
+    a, b = "モバイルバッテリー 20W 10000mAh", "モバイルバッテリー 30W 20000mAh"
+    r = _compare([_offer(a, 3000), _offer(b, 5000)], basis="mAh")
+    _assert_single_group(r, (a, b), "mAh", "charge", "1mAhあたり")
+    _assert_up(r, a, 0.3)
+    _assert_up(r, b, 0.25)
+    assert r.cheapest_unit_price.item_name == b
+
+
+def test_s5_auto_basis_keeps_first_dimension():
+    # 自動判定は従来どおり先頭の次元 W: 3000/20=150、5000/30=166.667 → 最初が最安
+    a, b = "モバイルバッテリー 20W 10000mAh", "モバイルバッテリー 30W 20000mAh"
+    r = _compare([_offer(a, 3000), _offer(b, 5000)])
+    _assert_single_group(r, (a, b), "W", "power", "1Wあたり")
+    _assert_up(r, a, 150)
+    _assert_up(r, b, 5000 / 30)
+    assert r.cheapest_unit_price.item_name == a
+
+
+# --- S6 巨大数・千区切り --------------------------------------------------------
+
+
+def test_s6_thousands_separator_is_read():
+    q = _parse("水 2,000ml×6本")
+    assert _conf(q) == "high"
+    assert q.count_total == 6
+    assert q.content_amount == pytest.approx(2000)
+    assert q.measure_total == pytest.approx(12000)
+
+
+def test_s6_nine_digits_are_still_a_quantity():
+    q = _parse("素材 123456789g×1個")
+    assert _conf(q) == "high"
+    assert q.content_amount == pytest.approx(123456789)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "素材 1234567890g×2個",  # 10桁
+        "素材 1,234,567,890g×2個",  # 千区切りでも10桁
+        "電池 10000000000本",  # 個数が10桁
+        "素材 " + "9" * 400 + "g×2個",  # float にすると無限大
+    ],
+    ids=["10digits", "10digits-comma", "count-10digits", "overflow"],
+)
+def test_s6_too_many_digits_is_low_and_does_not_raise(text):
+    q = _parse(text)
+    assert _conf(q) == "low"
+    assert q.count_total is None and q.content_amount is None and q.measure_total is None
+
+
+def test_s6_compare_survives_huge_numbers():
+    big = "素材 " + "9" * 400 + "g×2個"
+    r = _compare([_offer(big, 1000), _offer("素材 2kg×1個", 500)])
+    assert big in _names(r.unknown_offers)
+    assert _by_name(r, big).unit_price is None
+
+
+# --- S7 語の照合: 数字の境界と NFKC・casefold -------------------------------------
+
+W1 = "天然水 2L×6本"
+W2 = "天然水 12L×1箱"
+W3 = "天然水 1.2L×6本"
+W4 = "天然水 2Lペット 6本"
+
+
+def _water_offers():
+    return [_offer(W1, 1200), _offer(W2, 2000), _offer(W3, 1100), _offer(W4, 1300)]
+
+
+def test_s7_include_digit_term_does_not_match_inside_other_numbers():
+    r = _compare(_water_offers(), include_terms=["2L"])
+    assert _all_names(r) == {W1, W4}
+
+
+def test_s7_exclude_digit_term_does_not_match_inside_other_numbers():
+    r = _compare(_water_offers(), exclude_terms=["2L"])
+    assert _all_names(r) == {W2, W3}
+
+
+def test_s7_mah_term_boundaries():
+    a = "モバイルバッテリー 500mAh 1個"
+    b = "モバイルバッテリー 1500mAh 1個"
+    c = "モバイルバッテリー 5000mAh 1個"
+    r = _compare([_offer(a, 1000), _offer(b, 2000), _offer(c, 3000)], include_terms=["500mAh"])
+    assert _all_names(r) == {a}
+    r2 = _compare([_offer(a, 1000), _offer(b, 2000), _offer(c, 3000)], exclude_terms=["500mAh"])
+    assert _all_names(r2) == {b, c}
+
+
+def test_s7_term_ending_with_digit_does_not_match_before_digit():
+    a = "LR6 乾電池 20本"
+    b = "LR61 ボタン電池 2本"
+    r = _compare([_offer(a, 1000), _offer(b, 500)], include_terms=["LR6"])
+    assert _all_names(r) == {a}
+
+
+@pytest.mark.parametrize("term", ["usb", "USB", "ＵＳＢ", "Usb"])
+def test_s7_case_and_width_are_ignored(term):
+    a = "USB充電器 2個"
+    b = "ACアダプター 2個"
+    r = _compare([_offer(a, 1000), _offer(b, 800)], include_terms=[term])
+    assert _all_names(r) == {a}
+
+
+def test_s7_fullwidth_digit_term_matches_halfwidth_name():
+    r = _compare(_water_offers(), include_terms=["２Ｌ"])
+    assert _all_names(r) == {W1, W4}
+
+
+# --- S11 表の整合 -------------------------------------------------------------
+
+
+def test_s11_every_units_dimension_has_a_display_entry():
+    from shopping import quantity
+
+    dims = {v[0] for v in quantity.UNITS.values()}
+    assert dims, "UNITS が空"
+    assert dims <= set(quantity.DISPLAY), dims - set(quantity.DISPLAY)
+
+
+def test_s11_units_have_no_duplicate_keys_after_nfkc():
+    import unicodedata
+
+    from shopping import quantity
+
+    normalized = [unicodedata.normalize("NFKC", k) for k in quantity.UNITS]
+    assert len(set(normalized)) == len(normalized)
