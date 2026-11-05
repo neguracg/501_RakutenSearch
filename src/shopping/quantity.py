@@ -81,7 +81,11 @@ _GAP_COUNT_MEASURE = re.compile(rf"\s*(?:(?:入り?|入数|約|各|セット|組
 _NUM = r"(?<![\d.,])\d[\d,]*(?:\.\d+)?"
 _THOUSANDS = re.compile(r"\d{1,3}(?:,\d{3})+")
 _AFTER_SKIP = re.compile(r"\s*(?:分(?![a-z])|相当|換算|あたり|当たり|当り|につき|ごと|限定|まで|以上|以下|以内|未満|から|ずつ)")
-_BEFORE_SKIP = re.compile(r"(?:最大|最小)\s*$")
+# 「最大700g」。ASCII の MAX1kg は語境界を要し、空白を挟む独立語（Pepsi MAX 500ml）や語の一部（Climax・vitamin）は上限にしない
+_BEFORE_SKIP = re.compile(r"(?:最大|最小)\s*$|(?<![a-z])(?:max|min)$")
+# 択一の標識（接続語の集合・網羅ではない（漏れは SPEC §7 R5））。数え語ごとの語リストではない: 計量値の付く先頭の 1<数え語> の後ろに別の個数が続く時、
+# 間にこれがあれば択一（1個 または 3個）、無ければ単位あたりの説明・販促語（1個 送料無料 3個セット）
+_ALTERNATIVE = re.compile(r"(?:または|又は|もしくは|或いは|あるいは|(?<![a-z])or(?![a-z])|[〜~～/])")
 # 販促・価格表記（数量ではない）
 _PROMO = [
     re.compile(r"\d+(?:\.\d+)?\s*倍"),                                   # ポイント10倍・2倍
@@ -240,7 +244,7 @@ _KNOWN_NOT_COUNT: dict[str, re.Pattern[str]] = {
     "p": re.compile("(?:還元|倍|up|アップ|ポイント|増量)"),                              # 10P還元・5Pアップ
 }
 # _AFTER_SKIP のうち、数え語の直後にあると購入条件・上限になる語（捨てた数の検査の対象にする）
-_LIMIT_WORDS = re.compile(r"(?:以上|まで)")
+_LIMIT_WORDS = re.compile(r"(?:以上|まで|以下|以内|未満|から)")
 _BARE_RE = re.compile(r"(?:[×*]|(?<![a-z])x)\s*(\d+)(?![\d.]|[a-z])")
 # 数字の直後に続く語（表にあるかどうかは別途判定する）
 _WORD_AFTER_NUM = re.compile(r"(?<![\d.,])(\d{1,9})([^\W\d_]+)")
@@ -281,9 +285,32 @@ def _is_link_position(s: str, start: int, end: int) -> bool:
     return bool(_UNK_BEFORE.search(s[:start]) or _UNK_AFTER.match(s, end))
 
 
-def _tokens(s: str, flags: list[str], dropped: list[float]) -> list[_Tok]:
+def _note_dropped(m: re.Match, s: str, counters: dict[str, str], units: dict[str, tuple[str, float]],
+                  dropped: list[float], dropped_measures: list[tuple[str, float]],
+                  *, serving: bool = False) -> None:
+    """読まずに捨てた「数字＋数え語／計量単位」を P0 の候補として残す。数え語ごと・単位ごとの分岐は書かない。
+    serving=False の時、使用回数・換算の説明（回分。S1）は個数の候補にしない（最大33回分・/30回分）。"""
+    raw = m.group("num")
+    if not _digits_ok(raw):
+        return                                          # 桁超過・千区切りの形でない数は候補にしない
+    value = _num(raw)
+    if m.group("unit"):
+        dim, factor = units[m.group("unit")]
+        amount = round(value * factor, 9)
+        if amount > 0:
+            dropped_measures.append((dim, amount))
+    elif (value == int(value) and (serving or counters[m.group("counter")] not in SERVING_WORDS)
+            and not _is_known_not_count(m.group("counter"), s, m.end())):
+        dropped.append(value)
+
+
+def _tokens(s: str, flags: list[str], dropped: list[float],
+            dropped_measures: list[tuple[str, float]] | None = None) -> list[_Tok]:
     """flags に "oversize"（桁が多すぎる数）・"dropped_link"（連結位置の数え語を個数に採れなかった。P6）を積む。
-    dropped には P5 の境界で個数に採らなかった「数字＋数え語」の数を積む（採用した総数との食い違いを parse_quantity が見る）。"""
+    dropped には P5 の境界で個数に採らなかった「数字＋数え語」の数を、dropped_measures には採らなかった
+    「数字＋計量単位」の（次元, 基準単位に直した量）を積む（採用した総数・内容量との食い違いを parse_quantity が見る。P0）。"""
+    if dropped_measures is None:
+        dropped_measures = []
     units, counters, mults = _unit_table(), _counter_table(), _multiplier_table()
     rx = _token_re(tuple(units), tuple(counters))
     solo_low = {_norm(w) for w in SOLO_LOW_COUNTERS}
@@ -293,15 +320,32 @@ def _tokens(s: str, flags: list[str], dropped: list[float]) -> list[_Tok]:
         prev = s[a - 1] if a > 0 else ""
         # 英字・ハイフン等の直後の数字は型番の一部（SH-12M）。ただし直前の数量に続く「x」は乗算記号
         times = prev == "x" and ((a > 1 and not s[a - 2].isascii()) or (toks and toks[-1].end == a - 1))
-        if prev and not times and ((prev.isascii() and prev.isalpha()) or prev in "-_./"):
-            continue
         skipped = _AFTER_SKIP.match(s, m.end())
-        if skipped or _BEFORE_SKIP.search(s[max(0, a - 4):a]):
-            # 「6個以上」「6個まで」の数は購入条件・上限で個数ではない。ただし捨てた数としては検査する（P5 と同じ。A4）
-            if (skipped and m.group("counter") and _LIMIT_WORDS.match(skipped.group().strip())
-                    and _digits_ok(m.group("num")) and _num(m.group("num")) == int(_num(m.group("num")))
-                    and not _is_known_not_count(m.group("counter"), s, m.end())):
-                dropped.append(_num(m.group("num")))
+        before_limit = _BEFORE_SKIP.search(s, max(0, a - 4), a)
+        if before_limit:
+            # 「最大700g」「MAX1kg」「最大6個」の数は上限の記述で採らないが、採用した総数・内容量と食い違えば low（P0）
+            _note_dropped(m, s, counters, units, dropped, dropped_measures)
+            continue
+        # 型番（SH-12M）として読まない数字のうち、直前の量・個数に続くもの（30m12R・500ml24本・100g-200g）と、
+        # 区切り（_ /）の後ろのもの（シングル_55m・1本/3本セット）は、別の記述・択一の候補なので、採用した総数・内容量と
+        # 食い違えば low にするため捨てた数として残す（P0）。採用はしない（high に倒す読みは足さない）。
+        # ただし「/」の後ろの 1<数え語>（480ml/1個・24本入/1ケース）は単位あたりの説明なので候補にしない。
+        # 直前が同じ数え語の個数（2個/1個）の時だけ択一として残す
+        after_prev = bool(toks and toks[-1].end == a - (prev == "-"))             # 直前の量・個数の直後（ハイフン1字は挟む）
+        if prev and not times and ((prev.isascii() and prev.isalpha()) or prev in "-_./"):
+            per_unit = (prev == "/" and m.group("counter") and _num(m.group("num")) == 1
+                        and not (toks and toks[-1].kind == "count" and toks[-1].word == counters[m.group("counter")]))
+            if (prev in "_/" or after_prev) and not per_unit:
+                _note_dropped(m, s, counters, units, dropped, dropped_measures)
+            continue
+        if skipped:
+            # 「6個以上」「6個まで」「3個から」の数は購入条件・上限・下限で個数ではない。ただし捨てた数としては
+            # 検査する（P5 と同じ。A4）。内容量（1kgから選べる）も同じ。「あたり」「相当」などの換算の説明は残さない
+            limit = skipped.group().strip()
+            # 個数 1 の「から」（1個から購入可）は最小購入数であって個数の候補ではない（/1個 と同じ扱い）
+            minimum_one = (limit == "から" and m.group("counter") and _num(m.group("num")) == 1)
+            if _LIMIT_WORDS.match(limit) and not minimum_one:
+                _note_dropped(m, s, counters, units, dropped, dropped_measures, serving=True)
             continue
         ok = _digits_ok(m.group("num"))
         if ok is None:
@@ -474,6 +518,13 @@ def _drop_restated(g: _Group, flags: list[str]) -> _Group:
     return _Group(kept)
 
 
+def _explicit_chain(s: str, g: _Group) -> bool:
+    """個数の鎖が ×・入 で明示的につながっているか（12ロール×4袋・12本入 3パック）。空白だけの連結
+    （48本 2ケース）は、前に別に書かれた同じ数（【48本】）が内側の言い直しか総数かを決められない。"""
+    f = g.factors
+    return all(re.search(r"[×x*入]", s[a.end:b.start]) for a, b in zip(f, f[1:]))
+
+
 def _total(g: _Group) -> int:
     out = 1
     alone = len(g.factors) == 1
@@ -508,7 +559,8 @@ def parse_quantity(text: str, basis: str | None = None) -> QuantityInfo:
     s = _normalize(text)
     flags: list[str] = []
     dropped: list[float] = []
-    toks = _tokens(s, flags, dropped)
+    dropped_measures: list[tuple[str, float]] = []
+    toks = _tokens(s, flags, dropped, dropped_measures)
     if flags or _unknown_counter(s, toks):
         return _low(s.strip()[:80])
     if not toks:
@@ -541,13 +593,21 @@ def parse_quantity(text: str, basis: str | None = None) -> QuantityInfo:
             nxt = next((h for h in groups if h.toks[0].start >= g.toks[-1].end), None)
             adjacent = nxt is not None and not s[g.toks[-1].end:nxt.toks[0].start].strip()
             if g.measures or adjacent:
+                if (nxt is not None and not adjacent and nxt.factors
+                        and _ALTERNATIVE.search(s[g.toks[-1].end:nxt.toks[0].start])):
+                    # 1個 または 3個・1個 or 2個・1個〜3個: 間に択一の標識を挟んで別の個数が続くのは、
+                    # 単位あたりの説明ではなく択一。黙って捨てず、採用した総数と食い違えば low（P0）
+                    dropped.append(1.0)
                 continue
         keep.append(g)
     # 複合表記（12ロール×4袋）の 1 袋あたりと同じ単独の記述（12ロール入り）は矛盾とみなさない
-    inner = {(h.factors[0].word, h.factors[0].n) for h in keep if len(h.factors) > 1}
-    keep = [g for g in keep if not (len(g.factors) == 1
-                                     and (g.factors[0].word, g.factors[0].n) in inner
-                                     and any(len(h.factors) > 1 for h in keep))]
+    # 空白だけでつないだ鎖（48本 2ケース）の内側と同じ単独の記述は、入が付く（1ケース24本入り＝単位あたりの説明）
+    # 時だけ言い直し。入の無い単独（【48本】）は内側の言い直しか総数か決められない
+    compound = [h for h in keep if len(h.factors) > 1]
+    inner = {(h.factors[0].word, h.factors[0].n): _explicit_chain(s, h) for h in compound}
+    keep = [g for g in keep if not (len(g.factors) == 1 and (g.factors[0].word, g.factors[0].n) in inner
+                                     and (inner[(g.factors[0].word, g.factors[0].n)]
+                                          or _IRI_AFTER.match(s, g.factors[0].end)))]
     totals = {_total(g) for g in keep}
     if len(totals) > 1 or any(t <= 0 or t > MAX_PLAUSIBLE_COUNT for t in totals):
         return _low(evidence)
@@ -593,6 +653,11 @@ def parse_quantity(text: str, basis: str | None = None) -> QuantityInfo:
         else:
             return _low(evidence)
         amount = amounts[dim]
+        # 採らなかった「数字＋計量単位」（最大700g・シングル_55m）が、採用した同じ次元の内容量（またはその総量）と
+        # 食い違う時は、捨てた量が本当の内容量かもしれないので low（P0。個数の「捨てた数の検査」の内容量版）
+        for d, v in dropped_measures:
+            if d in amounts and v not in (amounts[d], round(amounts[d] * total, 9)):
+                return _low(evidence)
 
     if keep:
         main = max(keep, key=lambda g: len(g.factors))

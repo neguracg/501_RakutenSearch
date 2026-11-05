@@ -58,7 +58,7 @@ def build_server(*, public: bool = False, gate: Gate | None = None) -> MCPServer
         try:
             gate.admit(client_ip_var.get(), **check)
         except InvalidInput as exc:
-            out: dict[str, Any] = {"ok": False, "error": {"kind": "invalid_request", "message": str(exc)}}
+            out: dict[str, Any] = {"ok": False, "error": {"kind": exc.kind, "message": str(exc)}}
         except RateLimited as exc:
             out = {"ok": False, "error": {
                 "kind": "rate_limited",

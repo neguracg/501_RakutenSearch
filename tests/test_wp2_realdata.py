@@ -41,10 +41,10 @@ def test_title_separate_vs_included_flag():
 
 def test_conflict_appears_in_compare_caveats_and_search_notes():
     o = parse_item(_item(1, "送料無料 ダブル 12ロール"), "t")
-    ad = FakeAdapter({("k", 1): ([o], 1)})
-    r = service.compare_offers(["k"], adapter=ad, sleep=lambda s: None)
+    ad = FakeAdapter({("kk", 1): ([o], 1)})
+    r = service.compare_offers(["kk"], adapter=ad, sleep=lambda s: None)
     assert any("食い違" in c for c in r["comparison"]["caveats"])
-    r = service.search_products(["k"], adapter=ad, sleep=lambda s: None)
+    r = service.search_products(["kk"], adapter=ad, sleep=lambda s: None)
     assert any("食い違" in n for n in r["notes"])
 
 

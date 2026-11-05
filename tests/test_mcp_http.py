@@ -204,10 +204,10 @@ def test_web_and_mcp_count_against_the_same_ip_budget():
 
 
 @pytest.mark.parametrize("args", [
-    {"keywords": ["a", "b", "c", "d", "e", "f"]}, {"keywords": []}, {"keywords": ["あ" * 43]},
-    {"keywords": ["a"], "sort": "-hacked"}, {"keywords": ["a"], "min_price": -1},
-    {"keywords": ["a"], "max_price": 10_000_001}, {"keywords": ["a"], "ng_keyword": "x" * 129},
-    {"keywords": ["a"], "ng_keyword": "a b c d e f"},
+    {"keywords": ["aa", "bb", "cc", "dd", "ee", "ff"]}, {"keywords": []}, {"keywords": ["あ" * 43]},
+    {"keywords": ["aa"], "sort": "-hacked"}, {"keywords": ["aa"], "min_price": -1},
+    {"keywords": ["aa"], "max_price": 10_000_001}, {"keywords": ["aa"], "ng_keyword": "x" * 129},
+    {"keywords": ["aa"], "ng_keyword": "aa bb cc dd ee ff"},
 ])
 def test_invalid_search_input_is_an_error_result_with_credit_and_costs_nothing(args):
     app, ad = make_app("/kaimono", limit=2)
@@ -222,10 +222,10 @@ def test_invalid_search_input_is_an_error_result_with_credit_and_costs_nothing(a
 
 
 @pytest.mark.parametrize("args", [
-    {"keywords": ["a"], "basis": "ふしぎ"}, {"keywords": ["a"], "include_terms": ["x" * 129]},
-    {"keywords": ["a"], "exclude_terms": ["a", "b", "c", "d", "e", "f"]},
-    {"keywords": ["a"], "desired_quantity": 0}, {"keywords": ["a"], "desired_quantity": -5},
-    {"keywords": ["a"], "sort": "bogus"},
+    {"keywords": ["aa"], "basis": "ふしぎ"}, {"keywords": ["aa"], "include_terms": ["x" * 129]},
+    {"keywords": ["aa"], "exclude_terms": ["aa", "bb", "cc", "dd", "ee", "ff"]},
+    {"keywords": ["aa"], "desired_quantity": 0}, {"keywords": ["aa"], "desired_quantity": -5},
+    {"keywords": ["aa"], "sort": "bogus"},
 ])
 def test_invalid_compare_input_is_an_error_result_and_never_calls_the_api(args):
     app, ad = make_app("")
@@ -240,7 +240,7 @@ def test_valid_extremes_pass_the_public_check():
     with TestClient(app) as tc:
         d = data(rpc(tc, "", "compare_offers", {
             "keywords": ["洗濯洗剤"], "include_terms": ["あ" * 42], "exclude_terms": ["x" * 128],
-            "ng_keyword": "a b c d e", "min_price": 0, "max_price": 10_000_000, "sort": "+itemPrice",
+            "ng_keyword": "aa bb cc dd ee", "min_price": 0, "max_price": 10_000_000, "sort": "+itemPrice",
             "basis": "kg", "desired_quantity": 5000.5}))
     assert d["ok"] and d["comparison"]["basis"] == "g"
     assert ad.calls and ad.calls[0][1]["sort"] == "+itemPrice"
@@ -391,8 +391,8 @@ def test_public_pages_out_of_range_is_invalid_request_and_costs_nothing(tool, ar
     assert ad.calls == []
 
 
-@pytest.mark.parametrize("keywords,pages_n", [(["a", "b", "c", "d", "e"], 100), (["a", "b", "c", "d"], 3),
-                                              (["a", "b", "c", "d", "e"], None)])
+@pytest.mark.parametrize("keywords,pages_n", [(["aa", "bb", "cc", "dd", "ee"], 100), (["aa", "bb", "cc", "dd"], 3),
+                                              (["aa", "bb", "cc", "dd", "ee"], None)])
 def test_public_no_keywords_times_pages_limit(keywords, pages_n):
     app, ad = make_app("", adapter=FakeAdapter({}))
     args = {"keywords": keywords} if pages_n is None else {"keywords": keywords, "pages": pages_n}
