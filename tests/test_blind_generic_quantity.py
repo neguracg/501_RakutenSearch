@@ -1,66 +1,27 @@
 """WP3-0 ブラインド試験: 汎用 数量読み取り(§7) と 価格比較(§8)。
 
-正本: plans/WP3_generic_quantity.md「SPEC §7・§8 の差し替え」節と「インターフェース」節だけ。
-実装 (src/shopping の quantity/pricing/service 等) と既存の自作試験は見ずに作成した。
-期待値は全て手計算（各テストのコメントに式を残す）。実装担当は読まない・編集しない。
-未実装の今は落ちてよい（import は各テストの中で遅延させてあるので、収集は常に通る）。
+正本: plans/WP3_generic_quantity.md の「SPEC §7・§8 の差し替え」「インターフェース」
+「確定した契約」(Q0〜Q17 への回答)。src/shopping の実装と既存の自作試験は見ずに作成。
+期待値は全て手計算（式を各テストのコメントに残す）。実装担当は読まない・編集しない。
+import は各テストの中で遅延させてあるので、未実装でも収集は常に通る。
 
-【未確定の契約一覧 = Q 一覧】SPEC から一意に決まらない点。試験は「確実な所だけ」を固定し、
-下の Q に依存する試験は PROVISIONAL (クラス名 Test*Provisional*) に隔離した。
-実装後に命名が違う等で落ちた場合は、結果の形を SPEC に確定 → 「再固定の手続き」(分類③) で直す。
+確定した契約の使い方（試験が前提にしている名前）:
+  parse_quantity(text) -> QuantityInfo(count_total, count_unit, content_amount, content_dimension,
+                                      content_unit, measure_total, confidence, evidence)
+  compare(offers, include_terms, exclude_terms, desired_quantity, basis) -> Comparison
+    Comparison: basis / basis_label / groups[ComparisonGroup(basis, dimension, offers)] /
+                unknown_offers / cheapest_price / cheapest_unit_price / cheapest_total /
+                cheapest_for_quantity / caveats / notes
+    Offer.unit_price = 表示単位あたり（100mlあたりの円等）、Offer.unit_price_label = 空白なし。
 
-  Q0  公開関数と呼び出し形。parse_quantity(text) / compare(offers, include_terms, exclude_terms,
-      desired_quantity, basis) を shopping.quantity / shopping.pricing から import する想定
-      (指示書の記述)。compare が Offer.quantity を自分で読むのか item_name から再解析するのか不明
-      なので、試験側は Offer.quantity = parse_quantity(item_name) を入れてから渡す（どちらでも同値）。
-  Q1  結果の入れ物の形が §8 に無い。確実なのは「インターフェース」節の名前だけ:
-      候補= unit_price を持つ辞書/オブジェクト（quantity・unit_price_label も持つ）、
-      グループ= basis と dimension を持つ、caveats / notes という名前の文字列リスト。
-      試験は結果を dataclass/dict/list の入れ子として再帰的にたどり、この名前で見つける
-      （入れ物の階層は問わない）。この名前自体が違うと全比較試験が落ちる → SPEC 確定が先。
-  Q2  商品単価・単位価格・支払総額・必要数量を満たす最安、の4スロットのフィールド名が不明。
-      これに依存する試験は TestWinnerSlotsProvisional に隔離。キー名に unit/total/desired
-      系の語を含むかで探す（_slot_names）。確定後は _slot_names だけ直す。
-  Q3  unit_price は基準単位あたり(例 1g)か表示単位あたり(例 100g)か。§8 は「単位価格 = 価格 ÷ 量」と
-      「表示用に100gあたり」の両方を述べる。→ 絶対値は「1あたり」「表示単位あたり」の
-      どちらも許容（比の試験は不変）。表示用ラベルは空白を除いて比較（§8本文は「100ml あたり」、
-      インターフェース節は「100gあたり」と空白の揺れ）。
-  Q4  basis "個" のラベル文言は「1個あたり」か count_unit 別(「1本あたり」)か → 「1」始まり・「あたり」
-      を含む、だけ固定。基準単位 g/ml/m/W は §8 の例どおり「100gあたり」「100mlあたり」「1mあたり」
-      「1Wあたり」。mAh/Wh の表示単位は §8 に無いので試験しない。
-  Q5  個数に数え語が1つも無い文字列 (例「ミネラルウォーター 2L」「洗剤 900g」) の count_total は
-      1 か None か。confidence は high か。→ 確実な試験では数え語を必ず付ける。
-      PROVISIONAL で count_total==1 / high を固定（「単独なら単体」からの推測）。
-  Q6  数え語が2段のとき count_unit は内側(ロール)か外側(パック)か → count_unit を固定しない
-      (総数 count_total だけ固定)。単段・数字だけの ×N（「900g×6」）は「個」(§7 末尾 "無ければ個")。
-  Q7  basis 自動判定の「過半（high のもの）」の分母（全候補か high 候補か）と、ちょうど半数の
-      扱い → 全会一致/明白な過半の例だけ試験。
-  Q8  「単価不明」グループの表現（basis/dimension が None か、別キーか）。→ 「どのグループにも
-      基準次元の仲間として入っていない」＋ unit_price が None、だけ固定。
-  Q9  basis="個" のグループの dimension の値（None か "count" か）→ 固定しない。
-  Q10 desired_quantity: 「必要数量を満たす最安」の「最安」が商品単価(価格)か総額か単位価格か、
-      複数個買って満たす案を許すか、basis が L・kg 別名のときの desired の単位(L か ml か)
-      → 全解釈で同じ結果になるデータを作り、別名 basis と desired の組は試験しない。
-  Q11 送料不明の表現（総額最安フィールドが None か、フラグ付きで残すか）。→ 「総額最安スロットが空、
-      または結果のどこかの文字列が 送料 に言及」のどちらかを要求（無言で断定しない）だけ固定。
-  Q12 外した件数 notes の書式（「3件」等）。include で外した分も数えるか。→ exclude_terms 単独で外した
-      件数の数字がいずれかの notes 文字列に含まれる、だけ固定。単価不明の件数 caveats も同様（PROVISIONAL）。
-  Q13 内容量が無い (電池 40本) ときの measure_total は None と想定（count_total × None は計算不能）。
-  Q14 矛盾(low)のとき content_dimension / content_unit を None にするか → 固定しない
-      (count_total・content_amount・measure_total が None、だけ)。
-  Q15 「30cm×50m」のように同じ次元(長さ)で幅×長さを書く商品名は矛盾(low)になる理屈だが、実用上は
-      誤判定。SPEC は言及なし → 試験しない（要件の議論として報告）。
-  Q16 全角数字・全角英字・「x/X/*」の乗算記号を正規化するか → PROVISIONAL。
-  Q17 換算表に足すだけで単位を増やせる(データ駆動)ことは、表の名前が不明なため試験できない。
-
-未試験の観点: 上記 Q、過半のちょうど半数、単位拡張のデータ駆動、価格 None の候補、Web/MCP/CLI/regulars
-(インターフェース節の後半=別の層の試験)、mock_data、sort/pages/min_price 等の service 引数。
+試験していない観点: 価格 None の候補、service/MCP/CLI/Web/regulars/mock_data、sort/pages/
+min_price 等、UNITS/DISPLAY/COUNTERS への1行追加で単位が増えること（定数名は契約にあるが
+中身の形に依存するため）、複数買い、include と exclude を併用したときの notes の件数の
+数え方（適用順が不明）、mAh/Wh の比較（ラベルのみ契約にある）。
 """
 
 from __future__ import annotations
 
-import dataclasses
-import enum
 import itertools
 import re
 
@@ -71,7 +32,7 @@ CAVEAT = "仕様の違い（濃縮・層数・型番・色など）は判定し�
 _UNSET = object()  # 「このフィールドは試験しない」
 
 # --------------------------------------------------------------------------
-# 部品（遅延 import・Offer 作成・結果の再帰的な読み取り）
+# 部品
 # --------------------------------------------------------------------------
 
 
@@ -81,14 +42,8 @@ def _parse(text):
     return parse_quantity(text)
 
 
-def _field(obj, name):
-    if isinstance(obj, dict):
-        return obj[name]
-    return getattr(obj, name)
-
-
 def _conf(q):
-    c = _field(q, "confidence")
+    c = q.confidence
     return getattr(c, "value", c)
 
 
@@ -114,199 +69,64 @@ def _offer(name, price, shipping_status="included", shipping_fee=None, caption=N
     )
 
 
-def _plain(o, depth=0):
-    if depth > 14:
-        return None
-    if dataclasses.is_dataclass(o) and not isinstance(o, type):
-        return {f.name: _plain(getattr(o, f.name), depth + 1) for f in dataclasses.fields(o)}
-    if isinstance(o, enum.Enum):
-        return o.value
-    if isinstance(o, dict):
-        return {str(k): _plain(v, depth + 1) for k, v in o.items()}
-    if isinstance(o, (list, tuple, set, frozenset)):
-        return [_plain(v, depth + 1) for v in o]
-    if o is None or isinstance(o, (str, int, float, bool)):
-        return o
-    if hasattr(o, "__dict__"):
-        return {k: _plain(v, depth + 1) for k, v in vars(o).items() if not k.startswith("_")}
-    return str(o)
+def _compare(offers, **kw):
+    from shopping.pricing import compare
+
+    return compare(offers, **kw)
 
 
-def _dicts(node):
-    if isinstance(node, dict):
-        yield node
-        for v in node.values():
-            yield from _dicts(v)
-    elif isinstance(node, list):
-        for v in node:
-            yield from _dicts(v)
+def _names(offers):
+    return [o.item_name for o in offers]
 
 
-def _find_str(node, key):
-    for d in _dicts(node):
-        if isinstance(d.get(key), str):
-            return d[key]
+def _grouped(r):
+    """グループに入っている全 Offer。"""
+    return [o for g in r.groups for o in g.offers]
+
+
+def _all_names(r):
+    return set(_names(_grouped(r))) | set(_names(r.unknown_offers))
+
+
+def _by_name(r, name):
+    for o in _grouped(r) + list(r.unknown_offers):
+        if o.item_name == name:
+            return o
+    raise AssertionError(f"{name!r} が結果に無い。あるのは {sorted(_all_names(r))}")
+
+
+def _group_of(r, name):
+    for g in r.groups:
+        if name in _names(g.offers):
+            return g
     return None
-
-
-def _find_dict(node, key):
-    for d in _dicts(node):
-        if isinstance(d.get(key), dict):
-            return d[key]
-    return None
-
-
-def _names_in(node):
-    out = set()
-    for d in _dicts(node):
-        v = d.get("item_name")
-        if isinstance(v, str):
-            out.add(v)
-    return out
 
 
 def _nospace(s):
     return re.sub(r"\s+", "", s or "")
 
 
-def _compare(offers, **kw):
-    from shopping.pricing import compare
-
-    return _plain(compare(offers, **kw))
-
-
-def _candidates(plain):
-    """unit_price を持つ辞書を item_name で引く（Q1）。"""
-    found = {}
-    for d in _dicts(plain):
-        if "unit_price" in d:
-            name = _find_str(d, "item_name")
-            if name is not None:
-                found.setdefault(name, d)
-    return found
+def _assert_up(r, name, expected):
+    """Offer.unit_price は表示単位あたり (Q3)。丸める前の値。"""
+    o = _by_name(r, name)
+    assert o.unit_price == pytest.approx(expected, rel=1e-4), f"{name!r}: {o.unit_price} != {expected}"
 
 
-def _cand(plain, name):
-    c = _candidates(plain)
-    assert name in c, f"候補 {name!r} が結果に無い (Q1)。あるのは {sorted(c)}"
-    return c[name]
-
-
-def _groups(plain):
-    """basis と dimension の両方を持つ（ルートでも候補でもない）辞書 = グループ (Q1)。"""
-    out = []
-
-    def rec(node, is_root):
-        if isinstance(node, dict):
-            if (
-                not is_root
-                and "basis" in node
-                and "dimension" in node
-                and "unit_price" not in node
-                and "item_name" not in node
-            ):
-                out.append(node)
-                return
-            for v in node.values():
-                rec(v, False)
-        elif isinstance(node, list):
-            for v in node:
-                rec(v, False)
-
-    rec(plain, True)
-    return out
-
-
-def _bases_of(plain, name):
-    return {g["basis"] for g in _groups(plain) if name in _names_in(g)}
-
-
-def _together(plain, a, b):
-    return any({a, b} <= _names_in(g) for g in _groups(plain))
-
-
-def _strings_under(plain, key):
-    out = []
-
-    def collect(v):
-        if isinstance(v, str):
-            out.append(v)
-        elif isinstance(v, list):
-            for x in v:
-                collect(x)
-
-    for d in _dicts(plain):
-        if key in d:
-            collect(d[key])
-    return out
-
-
-def _up(plain, name):
-    return _cand(plain, name)["unit_price"]
-
-
-def _label(plain, name):
-    return _nospace(_cand(plain, name).get("unit_price_label"))
-
-
-def _factor(label):
-    m = re.match(r"(\d+)", label or "")
-    return int(m.group(1)) if m else 1
-
-
-def _assert_up(plain, name, per_basis_unit):
-    """単位価格の絶対値。基準単位あたり、または表示単位あたり、のどちらも許す (Q3)。"""
-    up = _up(plain, name)
-    assert up is not None, f"{name!r} の unit_price が None"
-    f = _factor(_label(plain, name))
-    assert up == pytest.approx(per_basis_unit, rel=1e-3) or up == pytest.approx(
-        per_basis_unit * f, rel=1e-3
-    ), f"{name!r}: unit_price={up} 期待 {per_basis_unit} または {per_basis_unit * f}"
-
-
-def _assert_ratio(plain, a, b, ratio):
-    ua, ub = _up(plain, a), _up(plain, b)
-    assert ua is not None and ub is not None
-    assert ua / ub == pytest.approx(ratio, rel=1e-3)
-
-
-def _slot_names(plain, must, any_of=(), forbid=()):
-    """4スロット(Q2)のキー名が不明なので、キー名の部分一致で探し、その値の中の商品名を返す。"""
-    keys, names = [], set()
-    for d in _dicts(plain):
-        for k, v in d.items():
-            kl = k.lower()
-            if (
-                all(m in kl for m in must)
-                and (not any_of or any(a in kl for a in any_of))
-                and not any(f in kl for f in forbid)
-            ):
-                keys.append(k)
-                names |= _names_in(v)
-    return keys, names
-
-
-_CHEAP = ("cheap", "min", "best", "lowest")
-_DESIRED = ("desired", "required", "satisf", "enough", "meet", "need", "fulfil")
-
-
-def _unit_slot(plain):
-    return _slot_names(plain, ("unit",), _CHEAP, forbid=("label",))
-
-
-def _total_slot(plain):
-    return _slot_names(plain, ("total",), _CHEAP)
-
-
-def _desired_slot(plain):
-    return _slot_names(plain, (), _DESIRED, forbid=("quantity",))
+def _assert_single_group(r, names, basis, dimension, label):
+    assert r.basis == basis
+    assert len(r.groups) == 1, [g.basis for g in r.groups]
+    g = r.groups[0]
+    assert g.basis == basis and g.dimension == dimension
+    assert set(names) == set(_names(g.offers))
+    for n in names:
+        assert _by_name(r, n).unit_price_label == label
 
 
 # --------------------------------------------------------------------------
 # データセット（手計算）
 # --------------------------------------------------------------------------
 
-# 洗剤 g。measure = 5400g / 4800g / 2000g。単価/g = 0.5555.. / 0.75 / 0.5
+# 洗剤 g。measure = 5400g / 4800g / 2000g。100gあたり = 55.5556 / 75 / 50
 D1 = "花王 洗濯洗剤 詰め替え 900g×6袋"
 D2 = "ライオン 洗濯洗剤 詰め替え 1.2kg×4袋"
 D3 = "洗濯洗剤 本体 2kg×1個"
@@ -316,7 +136,7 @@ def _detergents():
     return [_offer(D1, 3000), _offer(D2, 3600), _offer(D3, 1000)]
 
 
-# 飲料 ml。measure = 18000 / 12000 / 12000。単価/ml = 0.11 / 0.2 / 0.1
+# 飲料 ml。measure = 18000 / 12000 / 12000。100mlあたり = 11 / 20 / 10
 B1 = "天然水 2L×9本"
 B2 = "天然水 500ml×24本"
 B3 = "ミネラルウォーター 1.5L×8本"
@@ -326,7 +146,7 @@ def _beverages():
     return [_offer(B1, 1980), _offer(B2, 2400), _offer(B3, 1200)]
 
 
-# 電池 個。count = 40 / 40(20×2) / 100。単価/個 = 50 / 45 / 40
+# 電池 個。count = 40 / 40(20×2) / 100。1個あたり = 50 / 45 / 40
 T1 = "単3電池 40本"
 T2 = "単3形 アルカリ乾電池 20本入り×2パック"
 T3 = "単3電池 100本"
@@ -336,7 +156,7 @@ def _batteries():
     return [_offer(T1, 2000), _offer(T2, 1800), _offer(T3, 4000)]
 
 
-# ソーラーパネル W。measure = 200 / 200 / 200。単価/W = 100 / 120 / 90
+# ソーラーパネル W。measure = 200 / 200 / 200。1Wあたり = 100 / 120 / 90
 P1 = "ソーラーパネル 100W×2枚"
 P2 = "ソーラーパネル 200W 1枚"
 P3 = "ソーラーパネル 50W×4枚"
@@ -346,7 +166,7 @@ def _panels():
     return [_offer(P1, 20000), _offer(P2, 24000), _offer(P3, 18000)]
 
 
-# トイレットペーパー: 長さ(m)基準なら 600m/300m/1440m、個基準なら 12/12/48
+# トイレットペーパー: 長さなら 600m/300m/1440m、個なら 12/12/48
 R1 = "トイレットペーパー シングル 50m×12ロール"
 R2 = "トイレットペーパー ダブル 25m×12ロール"
 R3 = "トイレットペーパー ダブル 30m×12ロール×4パック"
@@ -362,7 +182,7 @@ def _rolls():
 
 # (text, count_total, count_unit, dimension, content_unit, content_amount, measure_total)
 PARSE_CASES = [
-    # 洗剤: 900g×6 は 内容量900g・個数6（数字だけの×6）。count_unit は無ければ「個」
+    # 900g×6 は 内容量900g・個数6（数字だけの×6）。count_unit は無ければ「個」
     ("花王 洗濯洗剤 詰め替え 900g×6", 6, "個", "mass", "g", 900, 5400),
     ("洗濯洗剤 詰め替え 900g×6袋", 6, "袋", "mass", "g", 900, 5400),
     ("ライオン 洗濯洗剤 詰め替え用 1.2kg×4袋", 4, "袋", "mass", "g", 1200, 4800),
@@ -374,25 +194,25 @@ PARSE_CASES = [
     ("ジュース 500cc×24本", 24, "本", "volume", "ml", 500, 12000),
     ("炭酸水 2ℓ×6本", 6, "本", "volume", "ml", 2000, 12000),
     ("ミネラルウォーター 500mL×24本", 24, "本", "volume", "ml", 500, 12000),
-    # 電池: 「単3」の3は個数ではない。内容量なし
+    # 電池: 「単3」の3は個数ではない。内容量なし (Q13: measure_total=None)
     ("単3電池 40本", 40, "本", None, None, None, None),
-    # 20本入り×2パック = 40。入り数が単段のときの count_unit は固定しない (Q6)
-    ("単3形 アルカリ乾電池 20本入り×2パック", 40, _UNSET, None, None, None, None),
+    # Q6: 数え語が2段のとき count_unit は内側（1つめ）。20*2=40
+    ("単3形 アルカリ乾電池 20本入り×2パック", 40, "本", None, None, None, None),
     # ソーラーパネル: 100*2=200, 200*1=200
     ("ソーラーパネル 100W×2枚", 2, "枚", "power", "W", 100, 200),
     ("ソーラーパネル 200W 1枚", 1, "枚", "power", "W", 200, 200),
     ("ソーラーパネル 100W 2枚セット", 2, _UNSET, "power", "W", 100, 200),
     # モバイルバッテリー: 10000*2
     ("モバイルバッテリー 10000mAh 2個", 2, "個", "charge", "mAh", 10000, 20000),
-    # トイレットペーパー: 長さ50m が1ロールの内容量。50*12=600、30*(12*4)=1440
+    # トイレットペーパー: 50m が1ロールの内容量。50*12=600、30*(12*4)=1440
     ("トイレットペーパー シングル 50m×12ロール", 12, "ロール", "length", "m", 50, 600),
-    ("トイレットペーパー ダブル 30m×12ロール×4パック", 48, _UNSET, "length", "m", 30, 1440),
+    ("トイレットペーパー ダブル 30m×12ロール×4パック", 48, "ロール", "length", "m", 30, 1440),
     ("トイレットペーパー ダブル 12ロール", 12, "ロール", None, None, None, None),  # 層数は読まない
     ("トイレットペーパー 12R×4", 48, _UNSET, None, None, None, None),  # R=ロール、12*4
-    ("トイレットペーパー 4パック×12ロール", 48, _UNSET, None, None, None, None),  # 順不同
-    ("トイレットペーパー 12ロール×4パック", 48, _UNSET, None, None, None, None),
-    ("洗剤 3袋入り×2", 6, _UNSET, None, None, None, None),  # 数字だけの×2は直前の個数に掛ける
-    ("ティッシュ 12ロール×6", 72, _UNSET, None, None, None, None),
+    ("トイレットペーパー 4パック×12ロール", 48, "パック", None, None, None, None),  # Q6: 内側=1つめ
+    ("トイレットペーパー 12ロール×4パック", 48, "ロール", None, None, None, None),
+    ("洗剤 3袋入り×2", 6, "袋", None, None, None, None),  # 数字だけの×2は直前の個数に掛ける
+    ("ティッシュ 12ロール×6", 72, "ロール", None, None, None, None),
 ]
 
 
@@ -403,19 +223,18 @@ def test_parse_quantity_expected(text, count, cunit, dim, unit, amount, measure)
     # §7 個数×内容量・基準単位への換算・measure_total = count_total × content_amount
     q = _parse(text)
     assert _conf(q) == "high", text
-    assert _field(q, "count_total") == count
+    assert q.count_total == count
     if cunit is not _UNSET:
-        assert _field(q, "count_unit") == cunit
-    assert _field(q, "content_dimension") == dim
-    assert _field(q, "content_unit") == unit
+        assert q.count_unit == cunit
+    assert q.content_dimension == dim
+    assert q.content_unit == unit
     if amount is None:
-        assert _field(q, "content_amount") is None
-        assert _field(q, "measure_total") is None  # Q13
+        assert q.content_amount is None
+        assert q.measure_total is None
     else:
-        assert _field(q, "content_amount") == pytest.approx(amount)
-        assert _field(q, "measure_total") == pytest.approx(measure)
-    ev = _field(q, "evidence")
-    assert isinstance(ev, str) and ev.strip()
+        assert q.content_amount == pytest.approx(amount)
+        assert q.measure_total == pytest.approx(measure)
+    assert isinstance(q.evidence, str) and q.evidence.strip()
 
 
 # 換算表: (text, dimension, 基準単位, 基準単位での量)
@@ -445,11 +264,11 @@ UNIT_CASES = [
 
 @pytest.mark.parametrize("text,dim,unit,amount", UNIT_CASES, ids=[c[0] for c in UNIT_CASES])
 def test_parse_unit_conversion_table(text, dim, unit, amount):
-    # §7 換算表。個数は問わず内容量の換算だけ見る（Q5 を避ける）
+    # §7 換算表。個数は問わず内容量の換算だけ見る
     q = _parse(text)
-    assert _field(q, "content_dimension") == dim
-    assert _field(q, "content_unit") == unit
-    assert _field(q, "content_amount") == pytest.approx(amount)
+    assert q.content_dimension == dim
+    assert q.content_unit == unit
+    assert q.content_amount == pytest.approx(amount)
 
 
 COUNT_WORDS = [
@@ -462,8 +281,8 @@ COUNT_WORDS = [
 def test_parse_count_word_table(word):
     # §7 数え語の表。12<数え語> は総数12・数え語がそのまま count_unit
     q = _parse(f"テスト商品 12{word}")
-    assert _field(q, "count_total") == 12
-    assert _field(q, "count_unit") == word
+    assert q.count_total == 12
+    assert q.count_unit == word
     assert _conf(q) == "high"
 
 
@@ -486,9 +305,9 @@ PROMO_CASES = [
 def test_parse_ignores_promo_and_explanatory_numbers(text, count, amount):
     q = _parse(text)
     assert _conf(q) == "high"
-    assert _field(q, "count_total") == count
+    assert q.count_total == count
     if amount is not None:
-        assert _field(q, "content_amount") == pytest.approx(amount)
+        assert q.content_amount == pytest.approx(amount)
 
 
 @pytest.mark.parametrize(
@@ -496,14 +315,33 @@ def test_parse_ignores_promo_and_explanatory_numbers(text, count, amount):
     ["ポイント10倍 最大50%OFF 送料無料 1000円ポッキリ", "おすすめ洗剤 ポイント10倍", "", "ギフト券"],
 )
 def test_parse_unreadable_is_none(text):
-    # §7 読めなければ none（販促だけの文字列に数量は無い）
+    # §7 / Q5: 数え語も内容量も無い → none
     q = _parse(text)
     assert _conf(q) == "none"
-    assert _field(q, "measure_total") is None
+    assert q.count_total is None
+    assert q.measure_total is None
+
+
+@pytest.mark.parametrize(
+    "text,amount,unit,dim",
+    [
+        ("ミネラルウォーター 2L", 2000, "ml", "volume"),
+        ("洗濯洗剤 詰め替え 900g", 900, "g", "mass"),
+        ("ソーラーパネル 100W", 100, "W", "power"),
+    ],
+)
+def test_parse_content_only_means_single_piece(text, amount, unit, dim):
+    # Q5: 数え語が無く内容量だけある → count_total=1, count_unit="個", high
+    q = _parse(text)
+    assert _conf(q) == "high"
+    assert q.count_total == 1
+    assert q.count_unit == "個"
+    assert q.content_dimension == dim and q.content_unit == unit
+    assert q.measure_total == pytest.approx(amount)
 
 
 CONFLICT_CASES = [
-    "飲料 500ml 2L ×6本",  # 同じ次元(体積)で値が違う内容量
+    "飲料 500ml 2L ×6本",  # 同じ次元(体積)で値が違う内容量（×でつながない並記）
     "洗濯洗剤 詰め替え 900g 1000g ×3袋",
     "単3電池 40本 48本",  # 総数が食い違う個数表記
     "トイレットペーパー 12ロール 18ロール",
@@ -512,12 +350,14 @@ CONFLICT_CASES = [
 
 @pytest.mark.parametrize("text", CONFLICT_CASES)
 def test_parse_conflict_is_low_and_nulls(text):
-    # §7 矛盾 → low、総数・内容量を null
+    # §7 矛盾 → low、総数・内容量を null。Q14: content_dimension・content_unit も None
     q = _parse(text)
     assert _conf(q) == "low"
-    assert _field(q, "count_total") is None
-    assert _field(q, "content_amount") is None
-    assert _field(q, "measure_total") is None
+    assert q.count_total is None
+    assert q.content_amount is None
+    assert q.measure_total is None
+    assert q.content_dimension is None
+    assert q.content_unit is None
 
 
 @pytest.mark.parametrize(
@@ -530,8 +370,48 @@ def test_parse_conflict_is_low_and_nulls(text):
 def test_parse_same_value_in_other_unit_is_not_conflict(text, count, amount):
     q = _parse(text)
     assert _conf(q) == "high"
-    assert _field(q, "count_total") == count
-    assert _field(q, "content_amount") == pytest.approx(amount)
+    assert q.count_total == count
+    assert q.content_amount == pytest.approx(amount)
+
+
+@pytest.mark.parametrize(
+    "text,count,amount_m,measure_m",
+    [
+        # Q15: 同じ次元の値が × でつながる寸法表記 → 矛盾でなく寸法、大きい方が内容量
+        ("ラップ 30cm×50m", 1, 50, 50),
+        ("アルミホイル 幅45cm×長さ100m", 1, 100, 100),
+        ("養生テープ 48mm×25m 5巻", 5, 25, 125),
+        ("ラップ 30cm×50m×3本", 3, 50, 150),
+        # 数え語の付かない裸の数 (34) は個数にしない。大きい方 85cm = 0.85m
+        ("ふきん 34×85cm", 1, 0.85, 0.85),
+    ],
+)
+def test_parse_dimension_notation_takes_larger(text, count, amount_m, measure_m):
+    q = _parse(text)
+    assert _conf(q) == "high", text
+    assert q.content_dimension == "length" and q.content_unit == "m"
+    assert q.content_amount == pytest.approx(amount_m)
+    assert q.count_total == count
+    assert q.measure_total == pytest.approx(measure_m)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "洗濯洗剤 詰め替え ９００ｇ×６袋",  # Q16 全角数字・全角英字 (NFKC)
+        "洗濯洗剤 詰め替え 900g x 6袋",
+        "洗濯洗剤 詰め替え 900gX6袋",
+        "洗濯洗剤 詰め替え 900g*6袋",
+        "洗濯洗剤 詰め替え 900g×6袋",
+    ],
+)
+def test_parse_normalizes_width_and_multiplication_sign(text):
+    q = _parse(text)
+    assert _conf(q) == "high"
+    assert q.count_total == 6
+    assert q.count_unit == "袋"
+    assert q.content_amount == pytest.approx(900)
+    assert q.measure_total == pytest.approx(5400)
 
 
 def test_parse_result_has_all_section7_fields():
@@ -540,88 +420,83 @@ def test_parse_result_has_all_section7_fields():
         "count_total", "count_unit", "content_amount", "content_dimension",
         "content_unit", "measure_total", "confidence", "evidence",
     ):  # fmt: skip
-        _field(q, name)
+        assert hasattr(q, name), name
 
 
 # --------------------------------------------------------------------------
-# §8 価格比較
+# §8 価格比較: 基準単位・グループ・単位価格
 # --------------------------------------------------------------------------
+
+
+def test_compare_result_shape_and_empty_input():
+    # Q1: Comparison の名前
+    r = _compare([])
+    for name in (
+        "basis", "basis_label", "groups", "unknown_offers", "cheapest_price",
+        "cheapest_unit_price", "cheapest_total", "cheapest_for_quantity", "caveats", "notes",
+    ):  # fmt: skip
+        assert hasattr(r, name), name
+    assert list(r.groups) == [] and list(r.unknown_offers) == []
+    assert r.cheapest_price is None and r.cheapest_unit_price is None
 
 
 def test_compare_mass_auto_basis_groups_sizes_together():
-    # §8 過半が同じ次元(mass) → 基準 g。サイズ違い・入り数違いはグループを分けない
+    # §8 過半が同じ次元(mass) → g。サイズ違い・入り数違いはグループを分けない
     r = _compare(_detergents())
-    for n in (D1, D2, D3):
-        assert _bases_of(r, n) == {"g"}
-        assert "100gあたり" in _label(r, n)
-    assert _together(r, D1, D2) and _together(r, D2, D3)
-    assert all(g["dimension"] == "mass" for g in _groups(r) if D1 in _names_in(g))
-    # 3000/5400=0.5556, 3600/4800=0.75, 1000/2000=0.5 → 比 1.1111, 1.5
-    _assert_ratio(r, D1, D3, 3000 / 5400 / 0.5)
-    _assert_ratio(r, D2, D3, 1.5)
-    _assert_up(r, D3, 0.5)
-    _assert_up(r, D2, 0.75)
+    _assert_single_group(r, (D1, D2, D3), "g", "mass", "100gあたり")
+    assert r.basis_label == "100gあたり"
+    # 3000/5400*100=55.5556, 3600/4800*100=75, 1000/2000*100=50
+    _assert_up(r, D1, 3000 / 5400 * 100)
+    _assert_up(r, D2, 75)
+    _assert_up(r, D3, 50)
+    # Q1: グループ内は単位価格の安い順
+    assert _names(r.groups[0].offers) == [D3, D1, D2]
 
 
 def test_compare_volume_auto_basis():
-    # §8 体積 → ml。1980/18000=0.11, 2400/12000=0.2, 1200/12000=0.1
+    # 1980/18000*100=11, 2400/12000*100=20, 1200/12000*100=10
     r = _compare(_beverages())
-    for n in (B1, B2, B3):
-        assert _bases_of(r, n) == {"ml"}
-        assert "100mlあたり" in _label(r, n)
-    assert _together(r, B1, B2) and _together(r, B2, B3)
-    assert all(g["dimension"] == "volume" for g in _groups(r) if B1 in _names_in(g))
-    _assert_up(r, B1, 0.11)
-    _assert_up(r, B2, 0.2)
-    _assert_up(r, B3, 0.1)
-    _assert_ratio(r, B2, B3, 2.0)
+    _assert_single_group(r, (B1, B2, B3), "ml", "volume", "100mlあたり")
+    assert r.basis_label == "100mlあたり"
+    _assert_up(r, B1, 11)
+    _assert_up(r, B2, 20)
+    _assert_up(r, B3, 10)
+    assert _names(r.groups[0].offers) == [B3, B1, B2]
 
 
 def test_compare_count_only_auto_basis_is_piece():
-    # §8 内容量の次元が無ければ「個」。2000/40=50, 1800/40=45, 4000/100=40
+    # §8 内容量の次元が無ければ「個」(Q4, Q9)。2000/40=50, 1800/40=45, 4000/100=40
     r = _compare(_batteries())
-    for n in (T1, T2, T3):
-        assert _bases_of(r, n) == {"個"}
-        lab = _label(r, n)
-        assert lab.startswith("1") and "あたり" in lab  # Q4
-    assert _together(r, T1, T2) and _together(r, T2, T3)
+    _assert_single_group(r, (T1, T2, T3), "個", "count", "1個あたり")
+    assert r.basis_label == "1個あたり"
     _assert_up(r, T1, 50)
     _assert_up(r, T2, 45)
     _assert_up(r, T3, 40)
+    assert _names(r.groups[0].offers) == [T3, T2, T1]
 
 
 def test_compare_power_auto_basis():
-    # §8 W。20000/200=100, 24000/200=120, 18000/200=90
+    # 20000/200=100, 24000/200=120, 18000/200=90
     r = _compare(_panels())
-    for n in (P1, P2, P3):
-        assert _bases_of(r, n) == {"W"}
-        assert "1Wあたり" in _label(r, n)
-    assert _together(r, P1, P2) and _together(r, P2, P3)
-    assert all(g["dimension"] == "power" for g in _groups(r) if P1 in _names_in(g))
+    _assert_single_group(r, (P1, P2, P3), "W", "power", "1Wあたり")
     _assert_up(r, P1, 100)
     _assert_up(r, P2, 120)
     _assert_up(r, P3, 90)
 
 
 def test_compare_length_auto_basis():
-    # §8 m。600/600=1.0, 450/300=1.5, 2400/1440=1.6667
+    # 600/600=1.0, 450/300=1.5, 2400/1440=1.6667
     r = _compare(_rolls())
-    for n in (R1, R2, R3):
-        assert _bases_of(r, n) == {"m"}
-        assert "1mあたり" in _label(r, n)
-    assert _together(r, R1, R3)
-    assert all(g["dimension"] == "length" for g in _groups(r) if R1 in _names_in(g))
+    _assert_single_group(r, (R1, R2, R3), "m", "length", "1mあたり")
     _assert_up(r, R1, 1.0)
     _assert_up(r, R2, 1.5)
     _assert_up(r, R3, 2400 / 1440)
 
 
 def test_compare_explicit_piece_basis_overrides_dimension():
-    # §8 basis 明示 "個"。同じ3商品が個基準になる: 600/12=50, 450/12=37.5, 2400/48=50
+    # basis="個": 600/12=50, 450/12=37.5, 2400/48=50
     r = _compare(_rolls(), basis="個")
-    for n in (R1, R2, R3):
-        assert _bases_of(r, n) == {"個"}
-    assert _together(r, R1, R2) and _together(r, R2, R3)
+    _assert_single_group(r, (R1, R2, R3), "個", "count", "1個あたり")
     _assert_up(r, R1, 50)
     _assert_up(r, R2, 37.5)
     _assert_up(r, R3, 50)
@@ -637,79 +512,128 @@ def test_compare_explicit_piece_basis_overrides_dimension():
     ],
 )
 def test_compare_explicit_basis_alias_is_normalized(alias, canonical, offers_fn, names, label):
-    # §8 L・kg の別名は基準単位に正規化
+    # §8 L・kg の別名は基準単位に正規化 (Q1: r.basis は正規化後)
     r = _compare(offers_fn(), basis=alias)
-    for n in names:
-        assert _bases_of(r, n) == {canonical}
-        assert label in _label(r, n)
+    dim = "volume" if canonical == "ml" else "mass"
+    _assert_single_group(r, names, canonical, dim, label)
 
 
-def test_compare_dimension_mismatch_goes_to_unknown_group_auto():
-    # §8 過半(3/4 が mass) → g。体積の商品は g の量が読めない = 単価不明
+def test_compare_dimension_mismatch_goes_to_unknown_auto():
+    # §8 過半(high 4件中3件が mass) → g。体積の商品は g の量が読めない = 単価不明 (Q8)
     liquid = "洗濯洗剤 液体 800ml×2本"
-    offers = _detergents() + [_offer(liquid, 700)]
-    r = _compare(offers)
-    assert _bases_of(r, D1) == {"g"}
-    assert _together(r, D1, D3)
-    assert not _together(r, D1, liquid) and not _together(r, D3, liquid)
-    assert _up(r, liquid) is None
+    r = _compare(_detergents() + [_offer(liquid, 700)])
+    assert r.basis == "g"
+    assert set(_names(r.groups[0].offers)) == {D1, D2, D3}
+    assert _names(r.unknown_offers) == [liquid]
+    assert _by_name(r, liquid).unit_price is None
+    assert _group_of(r, liquid) is None
+    # Q8: 件数が caveats に
+    assert any("単価を出せない候補: 1件" in c for c in r.caveats), r.caveats
 
 
 def test_compare_explicit_basis_ml_flips_which_group_is_unknown():
-    # §8 同じデータで basis="ml" → 液体だけが単価を持ち、g の商品は単価不明
+    # 同じデータで basis="ml" → 液体だけが単価を持ち、g の商品は単価不明
     liquid = "洗濯洗剤 液体 800ml×2本"
-    offers = _detergents() + [_offer(liquid, 700)]
-    r = _compare(offers, basis="ml")
-    assert _bases_of(r, liquid) == {"ml"}
-    _assert_up(r, liquid, 700 / 1600)  # 0.4375
-    for n in (D1, D2, D3):
-        assert _up(r, n) is None
-        assert not _together(r, n, liquid)
+    r = _compare(_detergents() + [_offer(liquid, 700)], basis="ml")
+    assert r.basis == "ml"
+    assert _names(r.groups[0].offers) == [liquid]
+    assert r.groups[0].dimension == "volume"
+    _assert_up(r, liquid, 700 / 1600 * 100)  # 43.75
+    assert set(_names(r.unknown_offers)) == {D1, D2, D3}
+    assert all(o.unit_price is None for o in r.unknown_offers)
+    assert any("単価を出せない候補: 3件" in c for c in r.caveats), r.caveats
 
 
 def test_compare_basis_with_no_readable_quantity_all_unknown():
     r = _compare(_detergents(), basis="ml")
-    for n in (D1, D2, D3):
-        assert _up(r, n) is None
+    assert r.groups == [] or all(not g.offers for g in r.groups)
+    assert set(_names(r.unknown_offers)) == {D1, D2, D3}
+    assert r.cheapest_unit_price is None
 
 
-def test_compare_unreadable_and_low_confidence_have_no_unit_price():
-    # §7/§8 単価計算に使うのは high のみ
+def test_compare_unreadable_and_low_confidence_are_unknown():
+    # §7/§8 単価計算に使うのは high のみ。件数 2 が caveats に
     none_name = "洗濯洗剤 詰め替え おすすめ"
     low_name = "洗濯洗剤 900g 1000g ×3袋"
     r = _compare(_detergents() + [_offer(none_name, 100), _offer(low_name, 100)])
-    assert _up(r, none_name) is None
-    assert _up(r, low_name) is None
-    assert not _together(r, D1, none_name) and not _together(r, D1, low_name)
-    assert _bases_of(r, D1) == {"g"}
+    assert r.basis == "g"
+    assert set(_names(r.unknown_offers)) == {none_name, low_name}
+    assert set(_names(r.groups[0].offers)) == {D1, D2, D3}
+    assert _by_name(r, none_name).unit_price is None
+    assert _by_name(r, low_name).unit_price is None
+    assert any("単価を出せない候補: 2件" in c for c in r.caveats), r.caveats
 
 
-def test_compare_minority_dimension_does_not_decide_piece_vs_dimension():
-    # §8 過半が同次元でなければ「個」: 電池2件(内容量なし)+洗剤1件 → 個
+def test_compare_no_unknown_no_unknown_caveat():
+    r = _compare(_detergents())
+    assert list(r.unknown_offers) == []
+    assert not any("単価を出せない候補" in c for c in r.caveats)
+
+
+def test_compare_minority_dimension_falls_back_to_piece():
+    # Q7: high の過半が同次元でなければ「個」: 電池2件(内容量なし)+洗剤1件 → 個
     # 洗剤は count 6 なので個基準で 3000/6=500
     det = "洗濯洗剤 詰め替え 900g×6袋"
     r = _compare([_offer(T1, 2000), _offer(T3, 4000), _offer(det, 3000)])
-    for n in (T1, T3, det):
-        assert _bases_of(r, n) == {"個"}
-    assert _together(r, T1, det)
+    _assert_single_group(r, (T1, T3, det), "個", "count", "1個あたり")
     _assert_up(r, det, 500)
     _assert_up(r, T1, 50)
 
 
-def test_compare_candidate_carries_new_quantity_fields():
+def test_compare_exactly_half_is_piece():
+    # Q7: ちょうど半数は「個」。洗剤(g)1件・水(ml)1件。個基準で 3000/6=500, 2400/24=100
+    a = "洗濯洗剤 詰め替え 900g×6袋"
+    b = "天然水 500ml×24本"
+    r = _compare([_offer(a, 3000), _offer(b, 2400)])
+    _assert_single_group(r, (a, b), "個", "count", "1個あたり")
+    _assert_up(r, a, 500)
+    _assert_up(r, b, 100)
+
+
+def test_compare_majority_denominator_is_high_candidates_only():
+    # Q7: 分母は high の候補。high 3件中 mass 2件(>半数) → g。low/読めない 3件は分母に入れない
+    liquid = "洗濯洗剤 液体 800ml×2本"
+    low = "洗濯洗剤 900g 1000g ×3袋"
+    noq1, noq2 = "洗濯洗剤 おすすめ", "洗濯洗剤 人気"
+    r = _compare(
+        [_offer(D1, 3000), _offer(D3, 1000), _offer(liquid, 700), _offer(low, 100),
+         _offer(noq1, 100), _offer(noq2, 100)]
+    )  # fmt: skip
+    assert r.basis == "g"
+    assert set(_names(r.groups[0].offers)) == {D1, D3}
+    assert set(_names(r.unknown_offers)) == {liquid, low, noq1, noq2}
+
+
+def test_compare_offer_carries_quantity_and_label():
     # インターフェース: 各候補に quantity（新項目）と unit_price・unit_price_label
     r = _compare(_detergents())
-    c = _cand(r, D1)
-    assert isinstance(c.get("unit_price_label"), str)
-    q = _find_dict(c, "quantity")
-    assert q is not None
-    assert q["count_total"] == 6
-    assert q["content_dimension"] == "mass"
-    assert q["measure_total"] == pytest.approx(5400)
-    assert q["confidence"] == "high"
+    o = _by_name(r, D1)
+    assert o.unit_price_label == "100gあたり"
+    assert o.quantity.count_total == 6
+    assert o.quantity.content_dimension == "mass"
+    assert o.quantity.measure_total == pytest.approx(5400)
+    assert _conf(o.quantity) == "high"
 
 
-# --- include / exclude ----------------------------------------------------
+def test_compare_uses_prefilled_quantity_when_present():
+    # Q0: Offer.quantity が入っていればそれを使う（item_name の文面と違っても quantity が正）
+    o = _offer("洗濯洗剤 詰め替え 900g×6袋", 3000)
+    o.quantity = _parse("洗濯洗剤 詰め替え 1kg×3袋")  # 1000g*3=3000g → 100gあたり 100円
+    r = _compare([o])
+    assert _by_name(r, o.item_name).unit_price == pytest.approx(100, rel=1e-4)
+
+
+def test_compare_parses_item_name_when_quantity_missing():
+    # Q0: quantity が無ければ parse_quantity(item_name) で読む。3000/5400*100
+    o = _offer("洗濯洗剤 詰め替え 900g×6袋", 3000)
+    o.quantity = None
+    r = _compare([o])
+    assert _by_name(r, o.item_name).unit_price == pytest.approx(3000 / 5400 * 100, rel=1e-4)
+
+
+# --------------------------------------------------------------------------
+# §8 include / exclude / caveats / notes
+# --------------------------------------------------------------------------
 
 N1 = "洗濯洗剤 詰め替え 900g×6袋"
 N2 = "洗濯洗剤 本体 900g×6本"
@@ -729,48 +653,50 @@ def _filter_offers():
 def test_include_terms_requires_all_terms_in_name():
     # §8 include_terms: 全部を商品名に含むものだけ残す。N1,N3,N5 が両方を含む
     r = _compare(_filter_offers(), include_terms=["洗濯洗剤", "詰め替え"])
-    assert set(_candidates(r)) == {N1, N3, N5}
+    assert _all_names(r) == {N1, N3, N5}
 
 
 def test_exclude_terms_drops_if_any_term_in_name():
     # §8 exclude_terms: どれかを含むものは外す。N2(本体) N3(濃縮) N4(業務用) が外れる
     r = _compare(_filter_offers(), exclude_terms=["本体", "濃縮", "業務用"])
-    assert set(_candidates(r)) == {N1, N5, N6}
+    assert _all_names(r) == {N1, N5, N6}
 
 
 def test_include_and_exclude_combined():
     r = _compare(_filter_offers(), include_terms=["洗濯洗剤", "詰め替え"], exclude_terms=["濃縮"])
-    assert set(_candidates(r)) == {N1, N5}
+    assert _all_names(r) == {N1, N5}
 
 
-def test_no_terms_keeps_everything():
+def test_no_terms_keeps_everything_and_no_exclusion_notes():
     r = _compare(_filter_offers())
-    assert set(_candidates(r)) == {N1, N2, N3, N4, N5, N6}
+    assert _all_names(r) == {N1, N2, N3, N4, N5, N6}
+    assert not any("除外" in n for n in r.notes)
 
 
 def test_filter_terms_are_judged_on_item_name_only():
     # §8 「商品名に含む」。キャプションだけにある語では残らない・外れない
     a = _offer("洗濯洗剤 900g×6袋", 3000, caption="詰め替え用 濃縮")
     b = _offer("洗濯洗剤 詰め替え 900g×6袋", 3000)
-    r = _compare([a, b], include_terms=["詰め替え"])
-    assert set(_candidates(r)) == {b.item_name}
-    r2 = _compare([a, b], exclude_terms=["濃縮"])
-    assert set(_candidates(r2)) == {a.item_name, b.item_name}
+    assert _all_names(_compare([a, b], include_terms=["詰め替え"])) == {b.item_name}
+    assert _all_names(_compare([a, b], exclude_terms=["濃縮"])) == {a.item_name, b.item_name}
 
 
-def test_exclude_count_appears_in_notes():
-    # §8 外した件数を notes に出す。3件外す（残り3件）→ いずれかの notes に「3」(Q12)
+def test_exclude_count_in_notes_exact_format():
+    # Q12: 「除く語で除外: N件」。3件外す
     r = _compare(_filter_offers(), exclude_terms=["本体", "濃縮", "業務用"])
-    notes = _strings_under(r, "notes")
-    assert notes, "notes が無い (Q1)"
-    assert any("3" in n for n in notes), notes
+    assert "除く語で除外: 3件" in r.notes
+    assert not any(n.startswith("含む語で除外") for n in r.notes)  # 0件なら出さない
 
 
-# --- caveats --------------------------------------------------------------
+def test_include_count_in_notes_exact_format():
+    # Q12: 「含む語で除外: N件」。N2,N4,N6 の3件が「洗濯洗剤」「詰め替え」を満たさない
+    r = _compare(_filter_offers(), include_terms=["洗濯洗剤", "詰め替え"])
+    assert "含む語で除外: 3件" in r.notes
+    assert not any(n.startswith("除く語で除外") for n in r.notes)
 
 
 def _has_caveat(r):
-    return any(_nospace(CAVEAT) in _nospace(c) for c in _strings_under(r, "caveats"))
+    return any(_nospace(CAVEAT) in _nospace(c) for c in r.caveats)
 
 
 @pytest.mark.parametrize(
@@ -795,134 +721,135 @@ def test_standing_caveat_always_present(case):
 
 
 # --------------------------------------------------------------------------
-# PROVISIONAL: 結果スロットの命名 (Q2) や未確定の挙動 (Q5/Q11/Q12/Q16) に依存する試験
-# 実装後に命名が違って落ちた場合は SPEC に結果の形を確定してから再固定する。
+# §8 4種類の最安 (Q1/Q2/Q10/Q11)
 # --------------------------------------------------------------------------
 
 
-def _need_slot(keys, kind):
-    assert keys, f"{kind} スロットのキーが結果に見つからない (Q2: 命名が未確定)"
+def test_cheapest_price_and_unit_price_are_distinct_kinds():
+    # 商品単価(価格)最安は D3 (1000円)、単位価格最安も D3 (50/100g)。
+    r = _compare(_detergents())
+    assert r.cheapest_price.item_name == D3
+    assert r.cheapest_unit_price.item_name == D3
+    # 飲料: 価格最安 B3 (1200) 、単位価格最安 B3 (10)。B1 が 1980 で2番手
+    r2 = _compare(_beverages())
+    assert r2.cheapest_price.item_name == B3 and r2.cheapest_unit_price.item_name == B3
+    # 電池: 価格最安 T2 (1800)、単位価格最安 T3 (40/個) → 別物
+    r3 = _compare(_batteries())
+    assert r3.cheapest_price.item_name == T2
+    assert r3.cheapest_unit_price.item_name == T3
 
 
-class TestWinnerSlotsProvisional:
-    def test_unit_price_cheapest_compares_unrounded_values(self):
-        # §8 単価は丸める前の値で比較。A=1000/3000g=33.3333/100g, B=3333/10000g=33.3300/100g
-        # 2桁に丸めると両方 33.33 で同点 → 先に並べた A が勝ってしまう。生の値なら B が最安
-        a = "洗濯洗剤 業務用 3kg×1袋"
-        b = "洗濯洗剤 業務用 10kg×1袋"
-        r = _compare([_offer(a, 1000), _offer(b, 3333)])
-        keys, names = _unit_slot(r)
-        _need_slot(keys, "単位価格最安")
-        assert b in names and a not in names
+def test_unit_price_cheapest_compares_unrounded_values():
+    # §8 単価は丸める前の値で比較。A=1000/3000*100=33.3333, B=3333/10000*100=33.3300
+    # 2桁に丸めると同点 33.33 → 先に並べた A が勝ってしまう。生の値なら B が最安
+    a = "洗濯洗剤 業務用 3kg×1袋"
+    b = "洗濯洗剤 業務用 10kg×1袋"
+    r = _compare([_offer(a, 1000), _offer(b, 3333)])
+    assert r.cheapest_unit_price.item_name == b
+    assert _names(r.groups[0].offers)[0] == b
 
-    def test_unit_price_cheapest_ignores_unknown_and_low(self):
-        # §8 単価不明・low は最安判定から外す（安い値段でも）。最安は D3 (0.5/g)
-        r = _compare(
-            _detergents()
-            + [_offer("洗濯洗剤 詰め替え おすすめ", 1), _offer("洗濯洗剤 900g 1000g ×3袋", 10)]
-        )
-        keys, names = _unit_slot(r)
-        _need_slot(keys, "単位価格最安")
-        assert D3 in names
-        assert "洗濯洗剤 詰め替え おすすめ" not in names
-        assert "洗濯洗剤 900g 1000g ×3袋" not in names
 
-    def test_desired_quantity_is_in_basis_unit_ml(self):
-        # §8 desired_quantity は basis の単位で解釈。basis=ml, desired=10000ml
-        # w1 18000ml(1980円) w3 12000ml(1200円) は満たす。w2 6000ml(700円) は満たさない。
-        # 複数買い(w2 を2個=1400円)でも 1200円の w3 が最安、単価も w3(0.1/ml) が満たす中で最安
-        w1 = "天然水 2L×9本"
-        w2 = "天然水 500ml×12本"
-        w3 = "ミネラルウォーター 1.5L×8本"
-        r = _compare(
-            [_offer(w1, 1980), _offer(w2, 700), _offer(w3, 1200)],
-            basis="ml",
-            desired_quantity=10000,
-        )
-        keys, names = _desired_slot(r)
-        _need_slot(keys, "必要数量を満たす最安")
-        assert w3 in names
-        assert w2 not in names  # 全体の価格最安 (700円) だが必要量に届かない
+def test_unit_price_cheapest_ignores_unknown_and_low():
+    # §8 単価不明・low は最安判定から外す（安い値段でも）。最安は D3
+    r = _compare(
+        _detergents()
+        + [_offer("洗濯洗剤 詰め替え おすすめ", 1), _offer("洗濯洗剤 900g 1000g ×3袋", 10)]
+    )
+    assert r.cheapest_unit_price.item_name == D3
 
-    def test_desired_quantity_in_piece_basis(self):
-        # §8 basis=個, desired=100 → 100本以上: T3(100本, 4000円)。T1/T2 は40本で足りない
-        # 複数買いでも T1×3=6000, T2×3=5400 > 4000
-        r = _compare(_batteries(), basis="個", desired_quantity=100)
-        keys, names = _desired_slot(r)
-        _need_slot(keys, "必要数量を満たす最安")
-        assert T3 in names
-        assert T1 not in names and T2 not in names
 
-    def test_shipping_unknown_total_cheapest_not_asserted(self):
-        # §8 送料不明なら支払総額最安を断定しない (Q11)
-        offers = [
-            _offer(B1, 1980, shipping_status="unknown"),
+def test_desired_quantity_in_basis_unit_ml():
+    # Q10: basis=ml, desired=10000ml。w1 18000ml(1980円) w3 12000ml(1200円) は満たす、
+    # w2 6000ml(700円) は満たさない。満たすもののうち価格最小は w3。全体の価格最安 w2 ではない
+    w1 = "天然水 2L×9本"
+    w2 = "天然水 500ml×12本"
+    w3 = "ミネラルウォーター 1.5L×8本"
+    offers = [_offer(w1, 1980), _offer(w2, 700), _offer(w3, 1200)]
+    r = _compare(offers, basis="ml", desired_quantity=10000)
+    assert r.cheapest_for_quantity.item_name == w3
+    assert r.cheapest_price.item_name == w2
+
+
+def test_desired_quantity_alias_basis_is_interpreted_in_base_unit():
+    # Q10: basis="L" でも desired は基準単位 ml で解釈 (10000 = 10L)。結果は上と同じ
+    w1 = "天然水 2L×9本"
+    w2 = "天然水 500ml×12本"
+    w3 = "ミネラルウォーター 1.5L×8本"
+    r = _compare([_offer(w1, 1980), _offer(w2, 700), _offer(w3, 1200)], basis="L", desired_quantity=10000)
+    assert r.basis == "ml"
+    assert r.cheapest_for_quantity.item_name == w3
+
+
+def test_desired_quantity_picks_lowest_price_not_lowest_unit_price():
+    # Q10: 価格(price)が最小のもの。q1 12000ml 1000円(8.33/100ml) と q2 10000ml 900円(9.0/100ml)
+    # desired=10000 → 両方満たす。価格最小は q2、単位価格最小は q1
+    q1 = "天然水 2L×6本"
+    q2 = "天然水 1L×10本"
+    r = _compare([_offer(q1, 1000), _offer(q2, 900)], desired_quantity=10000)
+    assert r.basis == "ml"
+    assert r.cheapest_for_quantity.item_name == q2
+    assert r.cheapest_unit_price.item_name == q1
+
+
+def test_desired_quantity_in_piece_basis_and_unreachable():
+    # basis=個, desired=100 → 100本以上は T3(4000円) のみ。複数買いは考えない
+    r = _compare(_batteries(), basis="個", desired_quantity=100)
+    assert r.cheapest_for_quantity.item_name == T3
+    # 満たすものが無ければ None、desired 未指定でも None
+    assert _compare(_batteries(), basis="個", desired_quantity=1000).cheapest_for_quantity is None
+    assert _compare(_batteries()).cheapest_for_quantity is None
+
+
+def test_desired_quantity_excludes_unknown_quantity():
+    # basis の量が読めない候補は満たす判定に入れない（安くても）
+    unk = "洗濯洗剤 おすすめ"
+    r = _compare(_detergents() + [_offer(unk, 1)], desired_quantity=1000)  # g: D3(2000g) など
+    assert r.cheapest_for_quantity.item_name == D3
+    assert r.cheapest_for_quantity.item_name != unk
+
+
+def test_total_cheapest_known_shipping_includes_fee():
+    # §8 支払総額 = 価格+送料。X: 1000+800=1800 (別途)、Y: 1500 (込み)。
+    # 同じ 12000ml なので 単位価格最安・価格最安は X、総額最安は Y
+    x = "天然水 2L×6本 送料別"
+    y = "天然水 2L×6本 送料込"
+    r = _compare(
+        [
+            _offer(x, 1000, shipping_status="separate", shipping_fee=800),
+            _offer(y, 1500, shipping_status="included"),
+        ]
+    )
+    assert r.cheapest_unit_price.item_name == x
+    assert r.cheapest_price.item_name == x
+    assert r.cheapest_total.item_name == y
+
+
+def test_total_cheapest_not_asserted_when_shipping_unknown():
+    # Q11: 送料不明の候補があれば cheapest_total=None、caveats に「送料」
+    r = _compare(
+        [_offer(B1, 1980, shipping_status="unknown"), _offer(B3, 1200, shipping_status="unknown")]
+    )
+    assert r.cheapest_total is None
+    assert any("送料" in c for c in r.caveats), r.caveats
+    assert r.cheapest_price.item_name == B3  # 他の3種は出す
+
+
+def test_total_cheapest_not_asserted_when_any_candidate_unknown_shipping():
+    # Q11: 1件でも送料不明の候補があれば断定しない
+    r = _compare(
+        [
+            _offer(B1, 1980, shipping_status="included"),
             _offer(B3, 1200, shipping_status="unknown"),
         ]
-        r = _compare(offers)
-        _cand(r, B1)  # 結果が空でないこと（スロットが無いだけで素通りさせない）
-        keys, names = _total_slot(r)
-
-        def all_strings(node):
-            if isinstance(node, str):
-                yield node
-            elif isinstance(node, dict):
-                for v in node.values():
-                    yield from all_strings(v)
-            elif isinstance(node, list):
-                for v in node:
-                    yield from all_strings(v)
-
-        mentions = any("送料" in s for s in all_strings(r))
-        assert (not names) or mentions, "送料不明なのに総額最安を無言で断定している"
-
-    def test_total_cheapest_includes_shipping_fee(self):
-        # §8 支払総額 = 価格+送料。X: 1000+800=1800 (別途)、Y: 1500 (込み)。
-        # 同じ 12000ml なので 単位価格最安は X (1000/12000)、総額最安は Y
-        x = "天然水 2L×6本 送料別"
-        y = "天然水 2L×6本 送料込"
-        r = _compare(
-            [
-                _offer(x, 1000, shipping_status="separate", shipping_fee=800),
-                _offer(y, 1500, shipping_status="included"),
-            ]
-        )
-        ukeys, unames = _unit_slot(r)
-        tkeys, tnames = _total_slot(r)
-        _need_slot(ukeys, "単位価格最安")
-        _need_slot(tkeys, "支払総額最安")
-        assert x in unames and y not in unames
-        assert y in tnames and x not in tnames
-
-    def test_unknown_count_is_reported_in_caveats(self):
-        # §8 単価不明の件数を caveats に出す。2件 → caveats のどこかに「2」と「不明」(Q12)
-        r = _compare(
-            _detergents()
-            + [_offer("洗濯洗剤 詰め替え おすすめ", 100), _offer("洗濯洗剤 900g 1000g ×3袋", 100)]
-        )
-        cav = " ".join(_strings_under(r, "caveats"))
-        assert "不明" in cav and "2" in cav
+    )
+    assert r.cheapest_total is None
+    assert any("送料" in c for c in r.caveats)
 
 
-class TestParseProvisional:
-    def test_no_counter_word_means_single_piece(self):
-        # §7 「単独なら単体」からの推測 (Q5)。2L の1本 → count 1, measure 2000
-        q = _parse("ミネラルウォーター 2L")
-        assert _field(q, "count_total") == 1
-        assert _field(q, "measure_total") == pytest.approx(2000)
-        assert _conf(q) == "high"
-
-    def test_fullwidth_digits_and_letters(self):
-        # Q16
-        q = _parse("洗濯洗剤 詰め替え ９００ｇ×６袋")
-        assert _field(q, "count_total") == 6
-        assert _field(q, "content_amount") == pytest.approx(900)
-
-    def test_x_as_multiplication_sign(self):
-        # Q16
-        q = _parse("洗濯洗剤 詰め替え 900g x 6袋")
-        assert _field(q, "count_total") == 6
-        assert _field(q, "content_amount") == pytest.approx(900)
+def test_no_shipping_caveat_when_all_shipping_known():
+    r = _compare([_offer(B1, 1980, shipping_status="included"), _offer(B3, 1200, shipping_status="included")])
+    assert r.cheapest_total.item_name == B3
+    assert not any("送料" in c for c in r.caveats if _nospace(CAVEAT) not in _nospace(c))
 
 
 # --------------------------------------------------------------------------
@@ -930,91 +857,47 @@ class TestParseProvisional:
 # --------------------------------------------------------------------------
 
 
-@dataclasses.dataclass
-class _FakeQ:
-    count_total: int
-    measure_total: float
-
-
-@dataclasses.dataclass
-class _FakeOffer:
-    item_name: str
-    quantity: _FakeQ
-
-
-@dataclasses.dataclass
-class _FakeCand:
-    offer: _FakeOffer
-    unit_price: float | None
-    unit_price_label: str
-
-
-@dataclasses.dataclass
-class _FakeGroup:
-    basis: str
-    dimension: str | None
-    items: list
-
-
-@dataclasses.dataclass
-class _FakeResult:
-    groups: list
-    cheapest_unit_price: _FakeCand | None
-    caveats: list
-    notes: list
-
-
-def _fake_result():
-    a = _FakeCand(_FakeOffer("A 900g×6袋", _FakeQ(6, 5400)), 0.5555, "100g あたり")
-    b = _FakeCand(_FakeOffer("B 2kg×1個", _FakeQ(1, 2000)), 0.5, "100gあたり")
-    u = _FakeCand(_FakeOffer("U ???", _FakeQ(0, 0)), None, "")
-    return _FakeResult(
-        groups=[_FakeGroup("g", "mass", [a, b]), _FakeGroup(None, None, [u])],
-        cheapest_unit_price=b,
-        caveats=[CAVEAT],
-        notes=["3件を除外"],
-    )
-
-
 class TestHelpersSelfCheck:
-    def test_candidates_and_groups_found_in_nested_structure(self):
-        p = _plain(_fake_result())
-        assert set(_candidates(p)) == {"A 900g×6袋", "B 2kg×1個", "U ???"}
-        assert _bases_of(p, "A 900g×6袋") == {"g"}
-        assert _together(p, "A 900g×6袋", "B 2kg×1個")
-        assert not _together(p, "A 900g×6袋", "U ???")
-        assert _up(p, "U ???") is None
-
-    def test_label_and_factor(self):
-        p = _plain(_fake_result())
-        assert _label(p, "A 900g×6袋") == "100gあたり"
-        assert _factor(_label(p, "A 900g×6袋")) == 100
-        assert _factor("1mあたり") == 1
-
-    def test_assert_up_accepts_both_scales(self):
-        p = _plain(_fake_result())
-        _assert_up(p, "B 2kg×1個", 0.5)
-        p["groups"][0]["items"][1]["unit_price"] = 50.0
-        _assert_up(p, "B 2kg×1個", 0.5)
-        with pytest.raises(AssertionError):
-            _assert_up(p, "B 2kg×1個", 0.7)
-
-    def test_strings_and_caveat(self):
-        p = _plain(_fake_result())
-        assert _has_caveat(p)
-        assert _strings_under(p, "notes") == ["3件を除外"]
-
-    def test_slot_names_find_by_key_substring(self):
-        p = _plain(_fake_result())
-        keys, names = _unit_slot(p)
-        assert keys == ["cheapest_unit_price"] and names == {"B 2kg×1個"}
-        tkeys, _ = _total_slot(p)
-        assert tkeys == []
+    def test_nospace_and_caveat_matching(self):
+        assert _nospace("100 ml あたり") == "100mlあたり"
+        assert _nospace(CAVEAT) in _nospace("  " + CAVEAT + " ")
 
     def test_offer_helper_prefilled_fields(self):
         from shopping.models import Offer  # 現行の Offer 定義 (フィールド名) だけに依存
 
-        o = _offer("テスト 12個", 100)
+        o = _offer("テスト 12個", 100, shipping_status="separate", shipping_fee=50)
         assert isinstance(o, Offer)
         assert o.item_name == "テスト 12個" and o.price == 100
+        assert o.shipping_status == "separate" and o.shipping_fee == 50
         assert o.mall_item_code.startswith("blind:")
+        assert _offer("テスト 12個", 100).mall_item_code != o.mall_item_code
+
+    def test_group_helpers_on_fake_result(self):
+        class G:
+            def __init__(self, offers):
+                self.offers = offers
+
+        class O:
+            def __init__(self, name, up):
+                self.item_name, self.unit_price = name, up
+
+        class R:
+            groups = [G([O("a", 1.0), O("b", 2.0)])]
+            unknown_offers = [O("u", None)]
+
+        r = R()
+        assert _all_names(r) == {"a", "b", "u"}
+        assert _group_of(r, "b") is r.groups[0]
+        assert _group_of(r, "u") is None
+        _assert_up(r, "b", 2.0)
+        with pytest.raises(AssertionError):
+            _assert_up(r, "b", 3.0)
+        with pytest.raises(AssertionError):
+            _by_name(r, "zzz")
+
+    def test_expected_numbers_by_hand(self):
+        # データセットの手計算が表の数値と一致すること（算術のみ）
+        assert 3000 / 5400 * 100 == pytest.approx(55.5556, rel=1e-5)
+        assert 1000 / 3000 * 100 == pytest.approx(33.3333, rel=1e-5)
+        assert round(1000 / 3000 * 100, 2) == round(3333 / 10000 * 100, 2)  # 丸めると同点
+        assert 3333 / 10000 < 1000 / 3000  # 生の値では B が安い
