@@ -24,3 +24,4 @@
 - 2026-11-05 WP2-1: SPEC §2/§3/§11/§12(AC-W1〜W8)・DECISIONS・README を公開Web方針へ更新（文書のみ） / pytest 308 passed
 - 2026-11-05 WP2-2: 倍巻き/長尺をlength_labelで別グループ化・送料タイトル食い違いの注意表示・URLはAPI返却のまま(SPEC §5/§7/§8)・BUGLOG3行 / pytest 333 passed(ブラインド96件green)
 - 2026-11-05 WP2-3: 公開Web(web.py/web_view.py/guard.py=直列化1秒・10分キャッシュ・IP別20回/分の共通層)・Dockerfile/compose/.dockerignore・requirements追加(docker未実行, .env.example は権限で作成不可) / pytest 373 passed
+- 2026-11-05 WP2-4: docs/index.html に公開URL・クレジット・運営者表示、README に Web 起動方法/本番URL/Docker / pytest 373 passed

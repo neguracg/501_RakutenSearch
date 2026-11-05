@@ -6,7 +6,7 @@
 
 ## 現在の状態（Phase 1）
 
-- 実装済み: 楽天検索 Adapter、複数キーワード検索（重複排除・流量制限）、数量正規化、単価・総額の比較、定番品マスタ、MCP サーバー（stdio）、CLI。
+- 実装済み: 楽天検索 Adapter、複数キーワード検索（重複排除・流量制限）、数量正規化、単価・総額の比較、定番品マスタ、MCP サーバー（stdio）、CLI、公開Web（Phase 1.5）。
 - 試験: モック・フィクスチャで自動試験（`pytest`）。**実 API を使った通し確認（AC12）は手動で別途行う**。pytest からは実 API を呼ばない。
 - **ChatGPT からの実接続は未検証**（MCP サーバーはローカルの stdio で動くところまで。接続手順の確立は別課題）。
 - **楽天ウェブサービス規約への対応**: 第10条(10)「特定の人のみがアクセスできる環境での使用」に適合させるため、楽天に登録するアプリは誰でも開ける公開Webアプリ（search / compare のみ・ログイン無し）とする。CLI と MCP サーバーは同じ登録アプリの運営者用ツール。方針は [docs/SPEC.md](docs/SPEC.md) §11。公開アプリを装う方法は採らない。
@@ -27,6 +27,27 @@ RAKUTEN_ACCESS_KEY=...
 ```
 
 環境変数が優先、無ければ `.env`。モックだけなら認証情報は不要。
+
+## 使い方（公開Web）
+
+本番: https://app.negura.website/kaimono/ （ログイン無し・誰でも使える。search / compare のみで、定番品は出さない）。
+
+ローカルで動かす（モック。実 API を呼ばない）:
+
+```
+set PYTHONPATH=src
+set SHOPPING_MOCK=1
+set BASE_PATH=/kaimono
+.venv\Scripts\python -m uvicorn shopping.web:app --port 8000
+```
+
+`http://127.0.0.1:8000/kaimono/` を開く。`BASE_PATH` を空にすると `/` 直下で動く。実 API を使う時は `SHOPPING_MOCK` を外し、`.env` か環境変数に認証情報を置く（ブラウザには渡さない）。
+
+- 流量保護（楽天 API のクォータを守る）: API 呼び出しはプロセス全体で 1 秒 1 回に直列化、同じ条件は最大 10 分キャッシュ、IP ごとに 20 回/分まで（超えると 429 の案内画面）。`RATE_LIMIT_PER_MIN` で回数を変えられる。
+- 全ページのフッターに楽天のクレジット（Supported by Rakuten Developers）と運営者の責任表示を出す。結果から出るリンクは楽天の商品ページだけ。
+- ヘルスチェック: `{BASE_PATH}/healthz`（API は呼ばない）。
+
+Docker（VPS 用）: `Dockerfile` と `docker-compose.prod.yml`（サービス `kaimono`、external network `internal`、ポート公開なし）。`.env` に `BASE_PATH` `PUBLIC_BASE_URL` `APP_ENV` `RAKUTEN_APPLICATION_ID` `RAKUTEN_ACCESS_KEY` を置いて `docker compose -f docker-compose.prod.yml up -d --build`。`docker build` はこの PC では未実行。
 
 ## 使い方（CLI）
 
