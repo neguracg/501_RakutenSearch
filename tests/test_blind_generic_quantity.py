@@ -1050,7 +1050,6 @@ S4_CASES = [
     ("単3電池 8本入×3P", 24, "本"),
     ("ボールペン 2pcs", 2, "個"),
     ("ボールペン 3pc", 3, "個"),
-    ("ティッシュ 12P", 12, "パック"),
     ("鉛筆 2ダース", 24, "個"),  # ダース=12倍
     ("鉛筆 1ダース", 12, "個"),
     ("ノート 5冊", 5, "冊"),
@@ -1513,11 +1512,22 @@ def test_x1_p_and_ten_exclusions_are_not_counters(text):
     assert q.count_total is None
 
 
-def test_x1_sixty_p_alone_is_a_counter():
-    # X1: 60P は数える（1〜99）
-    q = _parse("ウェブカメラ 60P")
-    assert _conf(q) == "high"
-    assert q.count_total == 60
+@pytest.mark.parametrize("text", ["ウェブカメラ 60P", "ウェブカメラ 60P 対応", "ティッシュ 12P"])
+def test_x1_correction_standalone_np_is_low(text):
+    # X1 訂正: 単独の NP（×の直後・入数の直後でない）はフレームレート等と区別できないので low
+    q = _parse(text)
+    assert _conf(q) == "low", text
+    assert q.count_total is None and q.measure_total is None
+
+
+@pytest.mark.parametrize(
+    "text,count",
+    [("ケーキ 6ヶ", 6), ("ギフト 5点", 5)],
+)
+def test_x1_correction_standalone_ke_and_ten_stay_high(text, count):
+    q = _parse(text)
+    assert _conf(q) == "high", text
+    assert q.count_total == count
 
 
 def test_x1_sixty_p_disagreeing_with_other_count_is_low():
