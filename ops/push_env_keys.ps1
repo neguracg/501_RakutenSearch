@@ -1,4 +1,4 @@
-# Copy the two Rakuten keys from the local .env to the VPS .env without printing them.
+﻿# Copy the two Rakuten keys from the local .env to the VPS .env without printing them.
 # The VPS IP is read at run time from C:\Claude\VPS\docs\infra\CONNECTION.md (not stored in this public repo).
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
