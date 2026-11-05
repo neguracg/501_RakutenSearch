@@ -57,3 +57,4 @@
 - 2026-11-06 本番反映: b09cf13 を deploy_app.sh kaimono で反映（STATE=OK）。本番 /kaimono/mcp search_products「ソーラーパネル 500W」pages=3 → api_count144・received90・pages_fetched3・truncated=true、pages=4 → invalid_request を実測
 - 2026-11-06 WP8-1: 数量の P0 徹底（読まずに捨てた『数字＋単位・数え語』を候補に残し、採用値と食い違えば low。最大・_・/・直前の量に続く数字・空白連結の鎖の言い直し）/ pytest 2651 passed（ブラインド 416/416・コーパス390 誤り0(xfail1)/不明73=18.7%）
 - 2026-11-06 WP8-2: 楽天が HTTP 400 にする『漢字以外の1文字だけの語』（keyword・NGKeyword）を送る前に弾く（inputs.check_term_lengths。kind=keyword_term_too_short。公開Web・公開MCP・CLI/service の3入口）。根拠: 公式 https://webservice.rakuten.co.jp/documentation/ichiba-item-search の keyword「半角2文字以上または全角1文字（ひらがな・カタカナ・記号は2文字以上）」＋実API実測（半角1字・全角の数字/英字/かな/長音/記号1字は400、漢字1字・2字語は通る、全角空白も区切り）/ 既存テストの1文字キーワードを2文字へ / pytest 2693 passed（ブラインド 416/416）
+- 2026-11-06 WP8-3: 文書同期（SPEC §7 P0 の徹底・R4・§11 入力検査の1文字の語・AC-W10 / BUGLOG A5 と HTTP 400 の2行 / DECISIONS 打ち止めの解除 / HANDOFF 件数: pytest 2693・コーパス390 不明73=18.7%）
