@@ -1,41 +1,36 @@
-# @owns 単位価格・支払総額の算出と最安判定（比較グループ分け・断定できない理由の明示）
-"""価格比較。仕様違い（ply/長さ）を誤統合せず、送料不明のときは総額最安を断定しない。"""
+# @owns 語による絞り込み・基準単位あたりの単価・支払総額・最安判定（比較グループ分け・断定できない理由の明示）
+"""価格比較。商品の意味（仕様の違い）は判定しない。読み取った数量（個数×内容量）から、
+指定または自動で決めた基準（basis）あたりの単価を出し、送料不明のときは総額最安を断定しない。"""
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 
 from .models import Offer
+from .quantity import DISPLAY, _norm, base_unit, parse_quantity, resolve_basis
 
-_LENGTH_TOLERANCE = 0.01
+SPEC_CAVEAT = "仕様の違い（濃縮・層数・型番・色など）は判定していません。商品名で確認してください。"
 
 
 @dataclass
 class ComparisonGroup:
-    key: str                          # 比較可能な束の識別子（ply・length_m・unit で作る）
-    ply: str | None
-    length_m: float | None
+    basis: str                        # "ml" "g" "m" "W" "mAh" "Wh" "個"
+    dimension: str                    # volume / mass / length / power / charge / energy / count
     offers: list[Offer]               # 単位価格の安い順（算出不能は末尾）
-    length_label: str | None = None   # 倍巻き・長尺の表記（"x2" 等）。通常品とは別の束にする
 
 
 @dataclass
 class Comparison:
+    basis: str
+    basis_label: str
     groups: list[ComparisonGroup]
+    unknown_offers: list[Offer]       # basis の量が読めない候補（単位価格なし）
     cheapest_price: Offer | None
     cheapest_unit_price: Offer | None
     cheapest_total: Offer | None
-    cheapest_meeting_quantity: Offer | None
+    cheapest_for_quantity: Offer | None
     caveats: list[str] = field(default_factory=list)
-
-
-def unit_price(offer: Offer) -> float | None:
-    """price / quantity.total。数量の confidence が high 以外は None。丸めない。"""
-    q = offer.quantity
-    if q is None or q.confidence != "high" or not q.total or q.total <= 0:
-        return None
-    if offer.price is None:
-        return None
-    return offer.price / q.total
+    notes: list[str] = field(default_factory=list)
 
 
 def total_price(offer: Offer) -> int | None:
@@ -49,139 +44,97 @@ def total_price(offer: Offer) -> int | None:
     return None
 
 
-def price_per_m(offer: Offer) -> float | None:
-    """1m あたり価格（単位価格 ÷ 1 単位の長さ）。長さが不明なら None。"""
-    up = unit_price(offer)
+def _terms(value) -> list[str]:
+    if value is None:
+        return []
+    items = [value] if isinstance(value, str) else list(value)
+    return [t for t in (_norm(x).strip() for x in items if isinstance(x, str)) if t]
+
+
+def _amount(offer: Offer, dimension: str):
+    """basis の次元での量（count なら個数、それ以外は内容量×個数）。読めない/high でなければ None。"""
     q = offer.quantity
-    if up is None or q is None or not q.length_m:
+    if q is None or q.confidence != "high":
         return None
-    return up / q.length_m
+    amount = q.count_total if dimension == "count" else (
+        q.measure_total if q.content_dimension == dimension else None)
+    return amount if amount is not None and amount > 0 else None
 
 
-def group_key(offer: Offer) -> tuple[str | None, float | None, str, str | None]:
-    """(ply, length_m, unit, length_label)。倍巻き・長尺は length_label で通常品と分ける。"""
-    q = offer.quantity
-    if q is None:
-        return (None, None, "", None)
-    return (q.ply, q.length_m, q.unit, q.length_label)
+def _auto_basis(offers: list[Offer]) -> tuple[str, str]:
+    high = [o for o in offers if o.quantity is not None and o.quantity.confidence == "high"]
+    dims = Counter(o.quantity.content_dimension for o in high
+                   if o.quantity.content_dimension in DISPLAY)
+    if dims:
+        dim, n = dims.most_common(1)[0]
+        if n * 2 > len(high):
+            return base_unit(dim), dim
+    return "個", "count"
 
 
-def _key_str(ply, length_m, unit, length_label=None) -> str:
-    length = "unknown" if length_m is None else f"{length_m:g}m"
-    base = f"{ply or 'unknown'}|{length}|{unit or 'unknown'}"
-    return f"{base}|{length_label}" if length_label else base
-
-
-def _length_matches(actual: float | None, wanted) -> bool:
-    try:
-        return actual is not None and abs(actual - float(wanted)) <= _LENGTH_TOLERANCE
-    except (TypeError, ValueError):
-        return False
-
-
-def _spec_check(offer: Offer, spec: dict) -> str:
-    """'ok' / 'mismatch'（仕様違い）/ 'unknown'（仕様不明）。"""
-    q = offer.quantity
-    unknown = False
-    for k, wanted in spec.items():
-        if k == "ply":
-            actual = q.ply if q else None
-            if actual is None:
-                unknown = True
-            elif actual != wanted:
-                return "mismatch"
-        elif k == "length_m":
-            actual = q.length_m if q else None
-            if actual is None:
-                unknown = True
-            elif not _length_matches(actual, wanted):
-                return "mismatch"
-        elif k == "unit":
-            actual = q.unit if q else None
-            if actual is None:
-                unknown = True
-            elif actual != wanted:
-                return "mismatch"
-    return "unknown" if unknown else "ok"
-
-
-_SUPPORTED_SPEC_KEYS = {"ply", "length_m", "unit"}
-
-
-def compare(offers: list[Offer], required_spec: dict | None = None,
-            desired_quantity: int | None = None) -> Comparison:
+def compare(offers: list[Offer], include_terms=None, exclude_terms=None,
+            desired_quantity=None, basis: str | None = None) -> Comparison:
+    if desired_quantity is not None and (isinstance(desired_quantity, bool)
+                                         or not isinstance(desired_quantity, (int, float))
+                                         or desired_quantity <= 0):
+        raise ValueError("desired_quantity must be positive")
+    fixed = resolve_basis(basis) if basis not in (None, "") else None   # 不正なら ValueError
     caveats: list[str] = []
-    candidates = list(offers)
+    notes: list[str] = []
 
-    if required_spec:
-        ignored = sorted(set(required_spec) - _SUPPORTED_SPEC_KEYS)
-        if ignored:
-            caveats.append(f"未対応の条件は比較に使っていない: {', '.join(ignored)}")
-        spec = {k: v for k, v in required_spec.items() if k in _SUPPORTED_SPEC_KEYS}
-        kept, mismatch, unknown = [], 0, 0
-        for o in candidates:
-            r = _spec_check(o, spec)
-            if r == "ok":
-                kept.append(o)
-            elif r == "mismatch":
-                mismatch += 1
-            else:
-                unknown += 1
-        if mismatch:
-            caveats.append(f"必要仕様に合わない候補 {mismatch} 件を比較から除外した")
-        if unknown:
-            caveats.append(f"仕様を読み取れなかった候補 {unknown} 件を比較から除外した")
+    # 語による絞り込み（商品名で判定。含む語 → 除く語の順）
+    candidates = list(offers)
+    inc, exc = _terms(include_terms), _terms(exclude_terms)
+    if inc:
+        kept = [o for o in candidates if all(t in _norm(o.item_name) for t in inc)]
+        if len(candidates) != len(kept):
+            notes.append(f"含む語で除外: {len(candidates) - len(kept)}件")
         candidates = kept
+    if exc:
+        kept = [o for o in candidates if not any(t in _norm(o.item_name) for t in exc)]
+        if len(candidates) != len(kept):
+            notes.append(f"除く語で除外: {len(candidates) - len(kept)}件")
+        candidates = kept
+
+    for o in candidates:
+        if o.quantity is None:
+            o.quantity = parse_quantity(o.item_name)
+        o.unit_price = None
+        o.unit_price_label = None
+
+    name, dim = fixed if fixed else _auto_basis(candidates)
+    mult, label = DISPLAY[dim]
+
+    members: list[Offer] = []
+    unknown: list[Offer] = []
+    amounts: dict[int, float] = {}
+    for o in candidates:
+        amount = _amount(o, dim)
+        if amount is None:
+            unknown.append(o)
+            continue
+        amounts[id(o)] = amount
+        if o.price is not None:
+            o.unit_price = o.price * mult / amount
+            o.unit_price_label = label
+        members.append(o)
+    members.sort(key=lambda o: (o.unit_price is None, o.unit_price or 0.0,
+                                o.price if o.price is not None else 10**12, o.mall_item_code))
+    groups = [ComparisonGroup(basis=name, dimension=dim, offers=members)] if members else []
 
     priced = [o for o in candidates if o.price is not None]
     if len(priced) != len(candidates):
         caveats.append(f"価格が不明な候補 {len(candidates) - len(priced)} 件は順位付けから外した")
-
-    # グループ分け（ply・length_m・unit が同じものだけ同じ束。入り数は束の条件にしない）
-    buckets: dict[tuple, list[Offer]] = {}
-    for o in candidates:
-        buckets.setdefault(group_key(o), []).append(o)
-    groups: list[ComparisonGroup] = []
-    for (ply, length_m, unit, label), members in buckets.items():
-        members.sort(key=lambda o: (unit_price(o) is None, unit_price(o) or 0.0,
-                                    o.price if o.price is not None else 10**12,
-                                    o.mall_item_code))
-        groups.append(ComparisonGroup(key=_key_str(ply, length_m, unit, label), ply=ply,
-                                      length_m=length_m, offers=members, length_label=label))
-    groups.sort(key=lambda g: (-len(g.offers), g.key))
-
-    if not priced:
+    if not candidates:
         caveats.append("比較できる候補がない")
-        return Comparison(groups=groups, cheapest_price=None, cheapest_unit_price=None,
-                          cheapest_total=None, cheapest_meeting_quantity=None, caveats=caveats)
+    if unknown:
+        caveats.append(f"単価を出せない候補: {len(unknown)}件（比べる単位 {name} の量を商品名から"
+                       "確定できないため、単位価格の最安の判定から外した）")
 
-    cheapest_price = min(priced, key=lambda o: (o.price, o.mall_item_code))
-
-    with_unit = [o for o in priced if unit_price(o) is not None]
-    # 倍巻き・長尺は 1 ロールの長さが通常品と違い、ロール単価では比べられない。
-    # 通常表記の候補があるなら、全体の「単位価格が最安」の判定から外す
-    plain_unit = [o for o in with_unit if group_key(o)[3] is None]
-    pool = plain_unit if plain_unit else with_unit
-    cheapest_unit = min(pool, key=lambda o: (unit_price(o), o.price, o.mall_item_code)) \
-        if pool else None
-    if plain_unit and len(plain_unit) != len(with_unit):
-        caveats.append(f"倍巻き・長尺の表記がある候補 {len(with_unit) - len(plain_unit)} 件は、"
-                       "1ロールの長さが通常品と違うため単位価格の最安の判定から外した"
-                       "（別の比較グループで見ること）")
-    if len(priced) != len(with_unit):
-        caveats.append(f"入り数を確定できず単位価格を出せない候補 {len(priced) - len(with_unit)} 件は"
-                       "単位価格の順位付けから外した")
-    if not with_unit:
-        caveats.append("単位価格を出せる候補がない")
-
-    specs_in_unit = {(o.quantity.ply, o.quantity.length_m, o.quantity.length_label)
-                     for o in pool}
-    if len(specs_in_unit) > 1:
-        caveats.append("仕様違いを含む候補同士で単位価格を比べている"
-                       "（シングル/ダブルや長さが異なる）。同じ仕様どうしで比べ直すこと")
-    specs_in_price = {(group_key(o)[0], group_key(o)[1], group_key(o)[3]) for o in priced}
-    if len(specs_in_price) > 1:
-        caveats.append("仕様違いを含むため、商品価格の最安は同じ商品どうしの比較ではない")
+    cheapest_price = min(priced, key=lambda o: (o.price, o.mall_item_code)) if priced else None
+    ranked = [o for o in members if o.unit_price is not None]
+    cheapest_unit = min(ranked, key=lambda o: (o.unit_price, o.price, o.mall_item_code)) \
+        if ranked else None
 
     unknown_ship = [o for o in priced if total_price(o) is None]
     if unknown_ship:
@@ -189,22 +142,23 @@ def compare(offers: list[Offer], required_spec: dict | None = None,
         caveats.append(f"送料が不明な候補が {len(unknown_ship)} 件あるため、"
                        "支払総額の最安は断定できない")
     else:
-        cheapest_total = min(priced, key=lambda o: (total_price(o), o.mall_item_code))
+        cheapest_total = min(priced, key=lambda o: (total_price(o), o.mall_item_code)) \
+            if priced else None
 
     meeting = None
     if desired_quantity is not None:
-        ok = [o for o in priced if o.quantity is not None and o.quantity.confidence == "high"
-              and o.quantity.total is not None and o.quantity.total >= desired_quantity]
+        ok = [o for o in members if o.price is not None and amounts[id(o)] >= desired_quantity]
         if ok:
-            meeting = min(ok, key=lambda o: (o.price, unit_price(o), o.mall_item_code))
+            meeting = min(ok, key=lambda o: (o.price, o.unit_price, o.mall_item_code))
             if total_price(meeting) is None:
                 caveats.append("必要数量を満たす最安は商品価格ベースで、送料は含まない（送料不明）")
         else:
-            caveats.append(f"必要数量 {desired_quantity} 以上を確実に満たす候補がない")
-        unreadable = [o for o in priced if o.quantity is None or o.quantity.confidence != "high"]
-        if unreadable:
-            caveats.append("入り数不明の候補は必要数量の判定に使っていない")
+            caveats.append(f"必要数量 {desired_quantity:g}{name} 以上を満たす候補がない")
+        if unknown:
+            caveats.append("量を読み取れない候補は必要数量の判定に使っていない")
 
-    return Comparison(groups=groups, cheapest_price=cheapest_price,
-                      cheapest_unit_price=cheapest_unit, cheapest_total=cheapest_total,
-                      cheapest_meeting_quantity=meeting, caveats=caveats)
+    caveats.append(SPEC_CAVEAT)
+    return Comparison(basis=name, basis_label=label, groups=groups, unknown_offers=unknown,
+                      cheapest_price=cheapest_price, cheapest_unit_price=cheapest_unit,
+                      cheapest_total=cheapest_total, cheapest_for_quantity=meeting,
+                      caveats=caveats, notes=notes)

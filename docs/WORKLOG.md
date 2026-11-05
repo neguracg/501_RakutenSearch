@@ -29,3 +29,4 @@
 - 2026-11-05 WP3-0: 汎用化に伴い旧ブラインド(TP専用)を退役、汎用ブラインド test_blind_generic_quantity.py を固定 / 130件
 - 2026-11-05 WP3-0b: 汎用ブラインドを確定契約(Q0〜Q17)に合わせて更新(結果の形・スロット名・ラベルを確定名へ、Q5/Q7/Q10/Q15/Q16 追加) / 150件
 - 2026-11-05 WP3-1: SPEC §7・§8・§10・§12 を汎用化（確定契約Q0〜Q17を同文面で採録）、quantity.py を換算表(UNITS/DISPLAY/COUNTERS)ベースで作り直し、QuantityInfo/Offer(unit_price)を新項目へ / pytest tests/test_quantity.py 83 passed（pricing 以降は WP3-2/3 で復旧するため全体は途中赤。ブラインド 103/150＝数量系は全緑、残り47は価格比較）
+- 2026-11-05 WP3-2: pricing.py を basis(自動/個/別名正規化)・include/exclude_terms・単価不明グループ・常設caveat・cheapest_for_quantity で作り直し、旧TP前提の試験を削除/置換 / pytest tests/test_pricing.py 40 passed（ブラインド 150/150。service以降は WP3-3 で復旧するため全体は途中赤）
