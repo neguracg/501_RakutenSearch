@@ -15,8 +15,8 @@ from .config import RakutenCredentials, load_credentials
 from .models import Offer, SearchStats
 from .orchestrator import Limits, search_many
 from .inputs import InvalidInput, check_basis, check_desired_quantity
-from .pricing import Comparison, compare, filter_by_terms, total_price
-from .quantity import parse_quantity, round_unit_price
+from .pricing import Comparison, compare, filter_by_terms, round_unit_price, total_price
+from .quantity import parse_quantity
 from .regulars import Regular, RegularsError, get_regular
 
 SOURCE = "楽天市場（楽天ウェブサービス）"

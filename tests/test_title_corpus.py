@@ -1,4 +1,5 @@
-"""AC-Q1: 実在らしい題名コーパス（tests/corpus/title_patterns.py。verifier 作成の真値つき）の回帰。
+"""AC-Q1: 実在らしい題名コーパス（tests/corpus/ の title_patterns 232件・unseen1_patterns 71件・unseen2_patterns 40件
+＝計343件。verifier 作成の真値つき）の回帰。
 
 採点は tests/corpus/compare.py の grade と同じ規則:
   - 高信頼（high）で真値と違う（WRONG）・曖昧な題名を高信頼で返す（RISK）・例外（EXC）は 0 件であること。
@@ -14,11 +15,17 @@ import pytest
 
 from shopping.quantity import parse_quantity
 
-_spec = importlib.util.spec_from_file_location(
-    "title_patterns", Path(__file__).parent / "corpus" / "title_patterns.py")
-_patterns = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_patterns)
-CORPUS = _patterns.P
+CORPUS_FILES = {"title_patterns": 232, "unseen1_patterns": 71, "unseen2_patterns": 40}
+
+
+def _load(name):
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).parent / "corpus" / f"{name}.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.P
+
+
+CORPUS = [pair for name in CORPUS_FILES for pair in _load(name)]
 
 MAX_UNKNOWN_RATIO = 0.20
 
@@ -59,7 +66,8 @@ def _case(title, truth):
 
 
 def test_corpus_is_the_expected_size_and_xfail_titles_exist():
-    assert len(CORPUS) == 232
+    assert {n: len(_load(n)) for n in CORPUS_FILES} == CORPUS_FILES
+    assert len(CORPUS) == 343
     titles = {t for t, _ in CORPUS}
     assert set(XFAIL) <= titles
 

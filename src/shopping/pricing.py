@@ -13,6 +13,25 @@ from .quantity import DISPLAY, _norm, base_unit, format_amount, parse_quantity, 
 SPEC_CAVEAT = "仕様の違い（濃縮・層数・型番・色など）は判定していません。商品名で確認してください。"
 
 
+def unit_price_digits(x: float) -> int:
+    """単価の小数桁数（唯一の実装）。通常は 2 桁。2 桁で 0.00 になってしまう小さな正の値は有効数字が出るまで
+    増やす（最大 4 桁。S10）。"""
+    for digits in (2, 3):
+        if x <= 0 or round(x, digits) != 0:
+            return digits
+    return 4
+
+
+def round_unit_price(x: float | None) -> float | None:
+    """JSON など数値で出す単価の丸め（桁数は unit_price_digits）。"""
+    return None if x is None else round(x, unit_price_digits(x))
+
+
+def format_unit_price(x: float) -> str:
+    """単価の表示（円）。桁数は unit_price_digits。"""
+    return f"{x:,.{unit_price_digits(x)}f}"
+
+
 @dataclass
 class ComparisonGroup:
     basis: str                        # "ml" "g" "m" "W" "mAh" "Wh" "個"

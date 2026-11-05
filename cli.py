@@ -19,7 +19,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from shopping import service  # noqa: E402
-from shopping.quantity import format_amount, format_unit_price  # noqa: E402
+from shopping.pricing import format_unit_price  # noqa: E402
+from shopping.quantity import format_amount  # noqa: E402
 
 
 def _add_search_args(p: argparse.ArgumentParser) -> None:

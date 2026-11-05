@@ -11,7 +11,8 @@ from shopping.adapters import rakuten
 from shopping.adapters.base import AdapterError
 from shopping.guard import Gate, GuardedAdapter, RateLimiter
 from shopping.pricing import compare
-from shopping.quantity import format_amount, format_unit_price
+from shopping.pricing import format_unit_price
+from shopping.quantity import format_amount
 from shopping.web import create_app
 from test_wp4_cells import Clock, VALID, make_env, mcp, offers  # noqa: F401  (環境変数は cells 側の autouse と同じ)
 

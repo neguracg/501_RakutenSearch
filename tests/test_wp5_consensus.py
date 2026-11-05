@@ -219,7 +219,7 @@ def test_s5_unknown_unit_price_has_no_dimension():
 
 def test_c1_json_rounding_and_display_share_one_digit_rule():
     from shopping import service
-    from shopping.quantity import format_unit_price, round_unit_price, unit_price_digits
+    from shopping.pricing import format_unit_price, round_unit_price, unit_price_digits
     assert not hasattr(service, "_round_price")
     for x in (123.456, 0.004, 0.0004, 0.00004, 5.0, 0.0):
         assert format_unit_price(x) == f"{round_unit_price(x):,.{unit_price_digits(x)}f}"

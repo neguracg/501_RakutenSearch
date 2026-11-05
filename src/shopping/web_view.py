@@ -7,7 +7,8 @@ from jinja2 import DictLoader, Environment
 from .adapters.rakuten import is_item_url
 from .credit import CREDIT_HTML, FRESHNESS_TEXT, OPERATOR_TEXT
 from .inputs import MAX_KEYWORDS, WIDTH_TEXT
-from .quantity import basis_choices, format_amount, format_unit_price
+from .pricing import format_unit_price
+from .quantity import basis_choices, format_amount
 
 _CSS = """
 :root{--bg:#fff;--fg:#1a1a1a;--muted:#5a5a5a;--line:#d9d9d9;--card:#f6f6f6;--accent:#b00020;--warn:#7a4b00;--warnbg:#fff4e0}

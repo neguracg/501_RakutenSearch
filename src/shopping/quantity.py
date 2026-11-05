@@ -63,10 +63,9 @@ CONTAINERS = frozenset({"パック", "袋", "セット", "ケース", "梱"})
 # P4: 同じ数が続く時に「外側の入れ物」として掛け算にする容器語（3個入り 3セット → 9）
 OUTER_WORDS = frozenset({"セット", "ケース", "パック", "箱", "袋"})
 
-# 数え語としての条件が文脈で変わる語（P3・X1）。表の別名（正規化後）で持つ
-MONTH_COUNTERS = frozenset({"ヶ", "ケ"})       # 直後が「月」なら期間（12ヶ月保証）で個数ではない
+# 数え語としての条件が文脈で変わる語（X1）。表の別名（正規化後）で持つ
 SOLO_LOW_COUNTERS = frozenset({"P"})           # ×・入数に続かない単独の NP は high にしない（60P 対応）
-MAX_PACK_P = 99                                # P は 1〜99 だけ個数の候補（1080P は画質）
+MAX_PACK_P = 99                                # 単独の P は 1〜99 だけ個数の候補（1080P は画質）。連結位置の P には掛けない（P6）
 
 MAX_PLAUSIBLE_COUNT = 100_000
 MAX_DIGITS = 9                      # 数値は千区切りを除いて 9 桁まで（S6）
@@ -185,25 +184,6 @@ def format_amount(x: float | None) -> str:
     return f"{x:,.9f}".rstrip("0").rstrip(".")
 
 
-def unit_price_digits(x: float) -> int:
-    """単価の小数桁数（唯一の実装）。通常は 2 桁。2 桁で 0.00 になってしまう小さな正の値は有効数字が出るまで
-    増やす（最大 4 桁。S10）。"""
-    for digits in (2, 3):
-        if x <= 0 or round(x, digits) != 0:
-            return digits
-    return 4
-
-
-def round_unit_price(x: float | None) -> float | None:
-    """JSON など数値で出す単価の丸め（桁数は unit_price_digits）。"""
-    return None if x is None else round(x, unit_price_digits(x))
-
-
-def format_unit_price(x: float) -> str:
-    """単価の表示（円）。桁数は unit_price_digits。"""
-    return f"{x:,.{unit_price_digits(x)}f}"
-
-
 # ---- 読み取り ----
 
 @dataclass
@@ -244,17 +224,22 @@ def _alt(keys) -> str:
 @functools.lru_cache(maxsize=8)
 def _token_re(unit_keys: tuple[str, ...], counter_keys: tuple[str, ...]):
     return re.compile(
-        rf"(?P<num>{_NUM})\s*(?:(?P<unit>{_alt(unit_keys)})(?!サイズ)|(?P<counter>{_alt(counter_keys)})(?!ー))")
+        rf"(?P<num>{_NUM})\s*(?:(?P<unit>{_alt(unit_keys)})(?!サイズ)|(?P<counter>{_alt(counter_keys)}))")
 
 
 _IRI_AFTER = re.compile(r"\s*入")
 _P_NOT_COUNT = re.compile(r"\s*(?:還元|倍|up|アップ|ポイント|増量)")
-_TEN_NOT_COUNT = re.compile(r"\s*(?:購入|以上|まで|で)")
+# P5: 数え語の直後に文字（かな・漢字・英字・長音）が続く時、個数にしてよいのは次の語の時だけ。それ以外
+# （お・ご・同・目・付・プ・指・刃・口・所・骨・タ・長音…）は個数にしない。語ごとの除外リストは持たない
+_COUNTER_BOUNDARY_WORDS = re.compile(r"(?:x|入|セット|パック|組|ケース|箱|袋|梱|set|pack)")
 _BARE_RE = re.compile(r"(?:[×*]|(?<![a-z])x)\s*(\d+)(?![\d.]|[a-z])")
 # 数字の直後に続く語（表にあるかどうかは別途判定する）
 _WORD_AFTER_NUM = re.compile(r"(?<![\d.,])(\d{1,9})([^\W\d_]+)")
 _UNK_BEFORE = re.compile(r"(?:[×*]|(?<![a-z])x|入数)\s*$")
 _UNK_AFTER = re.compile(r"\s*(?:入り?|入数)?\s*(?:[×*]|x)\s*\d")
+# P7 の対象: 量・個数に空白で続く「数字＋カタカナの語」（ブロック・カップ・ボトル・パウチ）。漢字の語（2層・1年・3色）と
+# 英字の語（4K・60fps）は仕様・期間の記号が大半なので対象にしない
+_KATAKANA_WORD = re.compile(r"[ァ-ヶ]")
 
 
 def _num(text: str) -> float:
@@ -269,11 +254,22 @@ def _digits_ok(raw: str) -> bool | None:
     return len(integer.replace(",", "")) <= MAX_DIGITS
 
 
+def _counter_boundary_ok(s: str, end: int) -> bool:
+    """P5: 数え語の直後の文字が境界か。数え語ごとの例外分岐はここに足さない。"""
+    if end >= len(s) or not s[end].isalpha():
+        return True                  # 末尾・空白・数字・記号（×・=・読点・中点・括弧など）
+    return _COUNTER_BOUNDARY_WORDS.match(s, end) is not None
+
+
+def _is_link_position(s: str, start: int, end: int) -> bool:
+    """P6: 個数の連結位置か（×・入数の直後、または直後に×が続く）。"""
+    return bool(_UNK_BEFORE.search(s[:start]) or _UNK_AFTER.match(s, end))
+
+
 def _tokens(s: str, flags: list[str]) -> list[_Tok]:
-    """flags に "oversize"（桁が多すぎる数）を積む。"""
+    """flags に "oversize"（桁が多すぎる数）・"dropped_link"（連結位置の数え語を個数に採れなかった。P6）を積む。"""
     units, counters, mults = _unit_table(), _counter_table(), _multiplier_table()
     rx = _token_re(tuple(units), tuple(counters))
-    months = {_norm(w) for w in MONTH_COUNTERS}
     solo_low = {_norm(w) for w in SOLO_LOW_COUNTERS}
     toks: list[_Tok] = []
     for m in rx.finditer(s):
@@ -299,17 +295,22 @@ def _tokens(s: str, flags: list[str]) -> list[_Tok]:
                 continue
             toks.append(_Tok("measure", a, m.end(), n=amount, dim=dim))
         else:
-            if value != int(value):
-                continue
+            link = _is_link_position(s, a, m.end())
             key = m.group("counter")
             word = counters[key]
-            if key in solo_low and not (1 <= value <= MAX_PACK_P
-                                        and not _P_NOT_COUNT.match(s, m.end())):
-                continue                             # 1080P・10P還元は個数ではない（P3・X1）
-            if key in months and s[m.end():m.end() + 1] == "月":
-                continue                             # 12ヶ月保証・3ヶ月分は期間（P3）
-            if word == "点" and _TEN_NOT_COUNT.match(s, m.end()):
-                continue                             # 2点購入・3点以上は販促（P3）
+            # 個数として採らない理由（P5 境界・小数・単独 P の上限や還元）。連結位置なら黙って捨てず low（P6）
+            if not _counter_boundary_ok(s, m.end()) or value != int(value):
+                if link:
+                    flags.append("dropped_link")
+                continue
+            if key in solo_low:
+                # 単独の P だけ 1〜99・還元等でない時に個数の候補（1080P は画質）。×・入数に連結する P と、
+                # 直前の量に空白だけで続く P（205ml 100P）は桁の上限を掛けず数える（P6。単独扱いは X1 が low にする）
+                attached = link or bool(toks and toks[-1].kind == "measure" and not s[toks[-1].end:a].strip())
+                if _P_NOT_COUNT.match(s, m.end()) or not (attached or 1 <= value <= MAX_PACK_P):
+                    if link:
+                        flags.append("dropped_link")
+                    continue
             toks.append(_Tok("count", a, m.end(), n=int(value), word=word,
                              mult=mults.get(key, 1), solo_low=key in solo_low))
     taken = {t.start for t in toks}
@@ -326,10 +327,12 @@ def _tokens(s: str, flags: list[str]) -> list[_Tok]:
     return toks
 
 
-def _unknown_counter(s: str) -> bool:
-    """数字の直後に表に無い語があり、そこが個数の連結位置（×の前後・入数の直後）なら True（S4）。"""
+def _unknown_counter(s: str, toks: list[_Tok]) -> bool:
+    """数字の直後に表に無い語があり、そこが個数の連結位置（×の前後・入数の直後。S4）、または計量値・個数に
+    空白だけで続く位置（900g 6ブロック。P7）なら True。"""
     units, counters = _unit_table(), _counter_table()
     rx = _token_re(tuple(units), tuple(counters))
+    ends = {t.end for t in toks if t.kind in ("measure", "count")}
     for m in _WORD_AFTER_NUM.finditer(s):
         if rx.match(s, m.start(1)):
             continue                              # 表にある単位・数え語（読み取り側で処理する）
@@ -338,6 +341,11 @@ def _unknown_counter(s: str) -> bool:
             continue
         if _UNK_BEFORE.search(s[:m.start(1)]) or _UNK_AFTER.match(s, m.start(2) + len(word)):
             return True
+        head = s[:m.start(1)]
+        stripped = head.rstrip()
+        if (len(stripped) < len(head) and len(stripped) in ends
+                and _KATAKANA_WORD.match(word)):
+            return True                           # P7: 量・個数の直後に空白で続く「数字＋表に無い語」
     return False
 
 
@@ -476,7 +484,7 @@ def parse_quantity(text: str, basis: str | None = None) -> QuantityInfo:
     s = _normalize(text)
     flags: list[str] = []
     toks = _tokens(s, flags)
-    if flags or _unknown_counter(s):
+    if flags or _unknown_counter(s, toks):
         return _low(s.strip()[:80])
     if not toks:
         return _none()
