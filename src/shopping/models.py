@@ -16,6 +16,9 @@ class QuantityInfo:
     measure_total: float | None = None     # count_total × content_amount（内容量が無ければ None）
     confidence: str = "none"               # "high" / "low" / "none"
     evidence: str = ""                     # 根拠にした文字列（無ければ ""）
+    # 名前に書かれた次元ごとの 1個あたり内容量（基準単位。S5: 比べる単位を明示した時に使う）。
+    # content_dimension / content_amount は、この中で最初に書かれた次元（自動判定用）
+    content_amounts: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if (self.measure_total is None and self.count_total is not None

@@ -13,6 +13,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from ..inputs import fits_limit
 from ..models import Offer
 from .base import AdapterError, MarketplaceAdapter
 
@@ -135,7 +136,10 @@ class RakutenAdapter(MarketplaceAdapter):
                ng_keyword: str | None = None, min_price: int | None = None,
                max_price: int | None = None, sort: str = "standard",
                availability: int = 1) -> tuple[list[Offer], int]:
-        if not isinstance(keyword, str) or not keyword.strip() or len(keyword.encode("utf-8")) > 128:
+        # 長さの判定は公開面の入力検査（Gate）と同じ関数（inputs.fits_limit。UTF-8 で 128 バイト以内）
+        if not isinstance(keyword, str) or not keyword.strip() or not fits_limit(keyword):
+            raise AdapterError("invalid_request")
+        if ng_keyword is not None and (not isinstance(ng_keyword, str) or not fits_limit(ng_keyword.strip())):
             raise AdapterError("invalid_request")
         if not (1 <= hits <= 30) or page < 1:
             raise AdapterError("invalid_request")

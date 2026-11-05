@@ -203,7 +203,7 @@ def test_web_and_mcp_count_against_the_same_ip_budget():
 
 
 @pytest.mark.parametrize("args", [
-    {"keywords": ["a", "b", "c", "d", "e", "f"]}, {"keywords": []}, {"keywords": ["あ" * 65]},
+    {"keywords": ["a", "b", "c", "d", "e", "f"]}, {"keywords": []}, {"keywords": ["あ" * 43]},
     {"keywords": ["a"], "sort": "-hacked"}, {"keywords": ["a"], "min_price": -1},
     {"keywords": ["a"], "max_price": 10_000_001}, {"keywords": ["a"], "ng_keyword": "x" * 129},
     {"keywords": ["a"], "ng_keyword": "a b c d e f"},
@@ -214,7 +214,7 @@ def test_invalid_search_input_is_an_error_result_with_credit_and_costs_nothing(a
         for _ in range(4):                                    # 回数制限(2)を超える回数でも弾かれ続けるだけ
             d = data(rpc(tc, "/kaimono", "search_products", args, ip="203.0.113.60"))
             assert d["ok"] is False and d["error"]["kind"] == "invalid_request" and d["error"]["message"]
-            assert d["credit"] == CREDIT_TEXT and "あ" * 65 not in d["error"]["message"]
+            assert d["credit"] == CREDIT_TEXT and "あ" * 43 not in d["error"]["message"]
         assert data(rpc(tc, "/kaimono", "search_products", {"keywords": ["洗濯洗剤"]},
                         ip="203.0.113.60"))["ok"]            # 回数枠は減っていない
     assert len(ad.calls) == 1
@@ -238,7 +238,7 @@ def test_valid_extremes_pass_the_public_check():
     app, ad = make_app("")
     with TestClient(app) as tc:
         d = data(rpc(tc, "", "compare_offers", {
-            "keywords": ["洗濯洗剤"], "include_terms": ["あ" * 64], "exclude_terms": ["x" * 128],
+            "keywords": ["洗濯洗剤"], "include_terms": ["あ" * 42], "exclude_terms": ["x" * 128],
             "ng_keyword": "a b c d e", "min_price": 0, "max_price": 10_000_000, "sort": "+itemPrice",
             "basis": "kg", "desired_quantity": 5000.5}))
     assert d["ok"] and d["comparison"]["basis"] == "g"

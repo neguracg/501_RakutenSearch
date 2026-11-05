@@ -14,8 +14,9 @@ from .adapters.rakuten import RakutenAdapter
 from .config import RakutenCredentials, load_credentials
 from .models import Offer, SearchStats
 from .orchestrator import Limits, search_many
-from .pricing import Comparison, compare, total_price
-from .quantity import basis_choices, parse_quantity, resolve_basis
+from .inputs import InvalidInput, check_basis, check_desired_quantity
+from .pricing import Comparison, compare, filter_by_terms, total_price
+from .quantity import parse_quantity
 from .regulars import Regular, RegularsError, get_regular
 
 SOURCE = "楽天市場（楽天ウェブサービス）"
@@ -54,8 +55,14 @@ def _error(kind: str, message: str, **extra) -> dict:
     return out
 
 
-def _round2(x: float | None) -> float | None:
-    return None if x is None else round(x, 2)
+def _round_price(x: float | None) -> float | None:
+    """単価の丸め: 通常は小数 2 桁。2 桁で 0 になる小さな正の値は有効数字が出るまで増やす（最大 4 桁。S10）。"""
+    if x is None:
+        return None
+    for digits in (2, 3, 4):
+        if x <= 0 or round(x, digits) != 0:
+            return round(x, digits)
+    return round(x, 4)
 
 
 def offer_to_dict(offer: Offer, known_urls: list[str] | None = None) -> dict:
@@ -84,7 +91,7 @@ def offer_to_dict(offer: Offer, known_urls: list[str] | None = None) -> dict:
             "content_amount": q.content_amount, "content_dimension": q.content_dimension,
             "content_unit": q.content_unit, "measure_total": q.measure_total,
             "confidence": q.confidence, "evidence": q.evidence},
-        "unit_price": _round2(offer.unit_price),
+        "unit_price": _round_price(offer.unit_price),
         "unit_price_label": offer.unit_price_label,
     }
     if known_urls is not None:
@@ -180,8 +187,14 @@ def _base_notes(offers: list[Offer], stats: SearchStats, mock: bool,
 def search_products(keywords, *, ng_keyword: str | None = None, min_price: int | None = None,
                     max_price: int | None = None, sort: str = "standard", pages: int = 1,
                     hits: int = 30, max_results: int = 30,
+                    include_terms=None, exclude_terms=None,
                     adapter: MarketplaceAdapter | None = None, sleep=None,
                     limits: Limits | None = None) -> dict:
+    inc = _terms_arg(include_terms, "include_terms")
+    exc = _terms_arg(exclude_terms, "exclude_terms")
+    for v in (inc, exc):
+        if isinstance(v, dict):
+            return v
     filters = dict(ng_keyword=ng_keyword, min_price=min_price, max_price=max_price, sort=sort)
     r = _search(keywords, adapter, pages=pages, hits=hits, limits=limits, sleep=sleep,
                 filters=filters)
@@ -189,11 +202,13 @@ def search_products(keywords, *, ng_keyword: str | None = None, min_price: int |
         return r
     offers, stats, mock = r
     _annotate(offers)
-    shown = offers[:max(0, max_results)]
-    notes = _base_notes(offers, stats, mock)
-    if len(shown) < len(offers):
-        notes.append(f"候補 {len(offers)} 件のうち先頭 {len(shown)} 件だけ返した（max_results）。")
+    kept, term_notes = filter_by_terms(offers, inc, exc)     # 比較（compare）と同じ絞り込み（S9）
+    shown = kept[:max(0, max_results)]
+    notes = _base_notes(kept, stats, mock) + term_notes
+    if len(shown) < len(kept):
+        notes.append(f"候補 {len(kept)} 件のうち先頭 {len(shown)} 件だけ返した（max_results）。")
     return {"ok": True, "source": SOURCE, "mock": mock, "keywords": _validate_keywords(keywords),
+            "include_terms": inc, "exclude_terms": exc,
             "stats": _stats_to_dict(stats), "returned": len(shown),
             "offers": [offer_to_dict(o) for o in shown], "notes": notes}
 
@@ -235,18 +250,13 @@ def _compare_flow(keywords, include_terms, exclude_terms, desired_quantity, basi
     for v in (inc, exc):
         if isinstance(v, dict):
             return v
-    if basis in ("", None):
+    if basis == "":
         basis = None
-    else:
-        try:
-            resolve_basis(basis)
-        except ValueError:
-            return _error("invalid_request",
-                          "basis は " + " / ".join(basis_choices()) + "（または L・kg 等の別名）で指定する")
-    if desired_quantity is not None and (isinstance(desired_quantity, bool)
-                                         or not isinstance(desired_quantity, (int, float))
-                                         or desired_quantity <= 0):
-        return _error("invalid_request", "desired_quantity は正の数で指定する（basis の単位）")
+    try:                                         # 検査の実装は inputs に一本化（公開面の Gate と同じ）
+        check_basis(basis)
+        check_desired_quantity(desired_quantity)
+    except InvalidInput as exc:
+        return _error("invalid_request", str(exc))
     r = _search(keywords, adapter, pages=pages, hits=hits, limits=limits, sleep=sleep,
                 filters=filters)
     if isinstance(r, dict):

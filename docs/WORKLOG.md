@@ -34,3 +34,4 @@
 - 2026-11-05 WP3-4: verifier 初回レビュー指摘 B1〜B5・C3〜C9 を修正（公開入力検査を guard.Gate.admit→inputs.validate に一本化、isascii+isdecimal、CLI/stdio MCP 既定モック、GET /mcp 405、healthz 503、requirements 分離と httpx2 直接 import 廃止、HANDOFF/SPEC AC-W1〜W11/README 更新）、BUGLOG 6行 / pytest 598 passed（ブラインド 150/150）。uvicorn 実起動(SHOPPING_MOCK=1・BASE_PATH=/kaimono)で Web 比較4カテゴリ200・/mcp compare_offers・GET /mcp 405・healthz 200 を確認し停止
 - 2026-11-05 WP4-0: 数量読み取り強化(S1〜S11)のブラインドを追記(既存150件は不変) / 209件
 - 2026-11-05 WP4-0b: W1〜W5 確定(×無し2段・count_unit正規名・小数点境界・l/L/ℓ casefold)をブラインドに固定、弱い形を確定形へ / 220件
+- 2026-11-05 WP4-1: SPEC §7・§8 に S1〜S11・W1〜W5 を追記し、quantity.py(回分・言い直し・総量併記・数え語P/pc/ダース等・2段・桁数・未知数え語low・表整合)と pricing.py(語の数字境界・basis次元・filter_by_terms)を修正、inputs(UTF-8 128バイト・check_basis/check_desired_quantity 一本化)/service/rakuten も連動 / pytest 740 passed（ブラインド 220/220）

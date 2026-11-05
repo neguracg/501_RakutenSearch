@@ -154,7 +154,7 @@ def test_multiple_keywords_split_by_newline_and_comma_max_five():
 
 
 @pytest.mark.parametrize("params", [
-    {}, {"q": "  "}, {"q": "x" * 129}, {"q": "あ" * 65}, {"q": "a", "min_price": "abc"},
+    {}, {"q": "  "}, {"q": "x" * 129}, {"q": "あ" * 43}, {"q": "a", "min_price": "abc"},
     {"q": "a", "max_price": "-5"}, {"q": "a", "ng": "x" * 129}, {"q": "a", "ng": "a b c d e f"},
     {"q": "a", "min_price": "①②"}, {"q": "a", "max_price": "²"}, {"q": "a", "min_price": "１２３"},
     {"q": "a", "max_price": "10000001"}, {"q": "a", "max_price": "9" * 5000},
@@ -169,7 +169,7 @@ def test_invalid_input_is_400_and_does_not_call_api(path, params):
 
 @pytest.mark.parametrize("params", [{"q": "a", "include": "x" * 129}, {"q": "a", "exclude": "a b c d e f"},
                                     {"q": "a", "basis": "ふしぎ"}, {"q": "a", "basis": "x" * 500},
-                                    {"q": "a", "include": "あ" * 65}])
+                                    {"q": "a", "include": "あ" * 43}])
 def test_invalid_compare_options_are_400_and_do_not_call_api(params):
     ad = fake()
     c, _, ga = make_client("", adapter=ad)
@@ -179,9 +179,9 @@ def test_invalid_compare_options_are_400_and_do_not_call_api(params):
 
 def test_limit_text_matches_the_checked_limit_and_input_never_echoed():
     c, _, _ = make_client("")
-    r = c.get("/search", params={"q": "あ" * 65})
-    assert r.status_code == 400 and "全角64文字（半角128文字）" in r.text and "あ" * 65 not in r.text
-    assert c.get("/search", params={"q": "あ" * 64}).status_code == 200      # ちょうど上限は通る
+    r = c.get("/search", params={"q": "あ" * 43})
+    assert r.status_code == 400 and "全角42文字（半角128文字）" in r.text and "あ" * 43 not in r.text
+    assert c.get("/search", params={"q": "あ" * 42}).status_code == 200      # ちょうど上限は通る
     assert c.get("/search", params={"q": "x" * 128}).status_code == 200
 
 
@@ -191,7 +191,7 @@ def test_rejected_input_does_not_consume_the_ip_budget():
     h = {"CF-Connecting-IP": "203.0.113.50"}
     for _ in range(5):
         assert c.get("/search", params={"q": "a", "min_price": "abc"}, headers=h).status_code == 400
-        assert c.get("/search", params={"q": "あ" * 65}, headers=h).status_code == 400
+        assert c.get("/search", params={"q": "あ" * 43}, headers=h).status_code == 400
     assert c.get("/search", params={"q": "洗濯洗剤"}, headers=h).status_code == 200
     assert c.get("/search", params={"q": "洗濯洗剤"}, headers=h).status_code == 200
 
