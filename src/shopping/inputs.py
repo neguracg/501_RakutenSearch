@@ -63,7 +63,7 @@ def has_too_short_term(text: str) -> bool:
 
 def check_term_lengths(texts, label: str) -> None:
     """楽天に渡す語（検索語・除外語）の 1 文字だけの語の検査。不正なら KeywordTermTooShort。
-    service・楽天アダプタもここを呼ぶ（公開面の Gate と同じ判定）。texts は文字列または文字列のリスト。"""
+    公開面の Gate（Web・MCP）と service（CLI・stdio MCP・定番品）が呼ぶ。楽天アダプタは呼ばない（アダプタは通信だけを持つ）。texts は文字列または文字列のリスト。"""
     items = [texts] if isinstance(texts, str) else list(texts or [])
     if any(isinstance(t, str) and has_too_short_term(t) for t in items):
         raise KeywordTermTooShort(
