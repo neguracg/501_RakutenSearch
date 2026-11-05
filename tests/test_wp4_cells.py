@@ -143,8 +143,8 @@ def test_invalid_input_is_rejected_calls_no_api_and_consumes_no_ip_budget(entran
 
 # 境界ちょうどは通る（セルの反対側）
 EDGE = {
-    "keywords": [list("abcde"), ["あ" * 42], ["x" * 128]],
-    "ng_keyword": ["x" * 128, "あ" * 42, "a b c d e"],
+    "keywords": [[c * 2 for c in "abcde"], ["あ" * 42], ["x" * 128]],
+    "ng_keyword": ["x" * 128, "あ" * 42, "aa bb cc dd ee"],
     "min_price": [0, 10_000_000],
     "max_price": [0, 10_000_000],
     "include_terms": [["あ" * 42], ["x" * 128], list("abcde")],

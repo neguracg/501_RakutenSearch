@@ -14,7 +14,7 @@ from .adapters.rakuten import RakutenAdapter
 from .config import RakutenCredentials, load_credentials
 from .models import Offer, SearchStats
 from .orchestrator import Limits, search_many
-from .inputs import InvalidInput, check_basis, check_desired_quantity
+from .inputs import InvalidInput, check_basis, check_desired_quantity, check_term_lengths
 from .pricing import Comparison, compare, filter_by_terms, round_unit_price, total_price
 from .quantity import parse_quantity
 from .regulars import Regular, RegularsError, get_regular
@@ -109,6 +109,12 @@ def _search(keywords, adapter, *, pages, hits, limits, sleep, filters):
     kws = _validate_keywords(keywords)
     if isinstance(kws, dict):
         return kws
+    try:                                         # 1 文字だけの語は楽天が HTTP 400 にする。送る前に弾く（inputs に一本化）
+        check_term_lengths(kws, "検索語")
+        if filters.get("ng_keyword"):
+            check_term_lengths(filters["ng_keyword"], "除外語（楽天側）")
+    except InvalidInput as exc:
+        return _error(exc.kind, str(exc))
     adapter = adapter if adapter is not None else make_adapter(local_tool=True)
     mock = isinstance(adapter, MockAdapter) or bool(getattr(adapter, "is_mock", False))
     if sleep is None:

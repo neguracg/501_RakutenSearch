@@ -21,7 +21,7 @@ def test_limit_is_128_utf8_bytes_s8():
 
 @pytest.mark.parametrize("kw", [
     dict(OK), dict(keywords="洗剤"), dict(keywords=["あ" * 42]), dict(keywords=["x" * 128]),
-    dict(keywords=list("abcde")), dict(OK, ng_keyword="a b c d e"), dict(OK, ng_keyword="あ" * 42),
+    dict(keywords=[c * 2 for c in "abcde"]), dict(OK, ng_keyword="aa bb cc dd ee"), dict(OK, ng_keyword="あ" * 42),
     dict(OK, min_price=0, max_price=10_000_000), dict(OK, sort="-reviewCount"),
     dict(OK, include_terms=["あ" * 42] * 5, exclude_terms=["x" * 128]), dict(OK, basis="個"),
     dict(OK, basis="kWh"), dict(OK, basis="L"), dict(OK, basis=""), dict(OK, desired_quantity=0.5),
@@ -32,9 +32,9 @@ def test_valid_inputs_pass(kw):
 
 
 @pytest.mark.parametrize("kw", [
-    dict(keywords=[]), dict(keywords=["  "]), dict(keywords=None), dict(keywords=list("abcdef")),
+    dict(keywords=[]), dict(keywords=["  "]), dict(keywords=None), dict(keywords=[c * 2 for c in "abcdef"]),
     dict(keywords=["あ" * 43]), dict(keywords=["x" * 129]), dict(keywords=[1]),
-    dict(OK, ng_keyword="a b c d e f"), dict(OK, ng_keyword="x" * 129), dict(OK, ng_keyword="あ" * 43), dict(OK, ng_keyword=5),
+    dict(OK, ng_keyword="aa bb cc dd ee ff"), dict(OK, ng_keyword="x" * 129), dict(OK, ng_keyword="あ" * 43), dict(OK, ng_keyword=5),
     dict(OK, min_price=-1), dict(OK, max_price=10_000_001), dict(OK, min_price=True),
     dict(OK, min_price="100"), dict(OK, max_price=1.5), dict(OK, sort="+hacked"), dict(OK, sort=""),
     dict(OK, include_terms=list("abcdef")), dict(OK, exclude_terms=["あ" * 43]),
@@ -67,7 +67,7 @@ def test_admit_validates_before_counting_the_ip_budget_or_touching_the_adapter()
     g, ad = gate(limit=2)
     for _ in range(10):
         with pytest.raises(InvalidInput):
-            g.admit("203.0.113.1", keywords=["a"] * 6)
+            g.admit("203.0.113.1", keywords=["aa"] * 6)
     g.admit("203.0.113.1", **OK)
     g.admit("203.0.113.1", **OK)
     with pytest.raises(RateLimited):
@@ -107,7 +107,7 @@ def test_keywords_times_pages_is_at_most_9(n, pages, ok):
 
 
 def test_blank_keywords_do_not_count_toward_the_9():
-    validate(keywords=["a", "b", "c", " ", ""], pages=3)
+    validate(keywords=["aa", "bb", "cc", " ", ""], pages=3)
 
 
 def test_rate_limiter_weight_counts_pages_and_rejection_consumes_nothing():

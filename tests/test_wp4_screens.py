@@ -107,7 +107,7 @@ def test_s10_format_unit_price_adds_digits_when_significant_digits_vanish(x, tex
 def test_s10_json_unit_price_keeps_significant_digits_and_screens_show_no_exponent():
     from shopping.web_view import _qty
     big = make_offer("big", "モバイルバッテリー 1000000mAh", 400)
-    d = service.compare_offers(["x"], basis="mAh", adapter=FakeAdapter({("x", 1): ([big], 1)}))
+    d = service.compare_offers(["xx"], basis="mAh", adapter=FakeAdapter({("xx", 1): ([big], 1)}))
     one = d["comparison"]["groups"][0]["offers"][0]
     assert one["unit_price"] == pytest.approx(0.0004, abs=1e-9) and one["unit_price"] != 0.0
     text = _qty(one)

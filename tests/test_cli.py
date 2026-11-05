@@ -52,7 +52,7 @@ def test_regular_missing_returns_1_with_message_on_stderr(capsys, tmp_path):
 
 
 def test_limit_error_returns_1(capsys):
-    assert cli.run(["search", "a", "b", "c", "d", "e", "f", "--mock"]) == 1
+    assert cli.run(["search", "aa", "bb", "cc", "dd", "ee", "ff", "--mock"]) == 1
     assert "invalid_request" in capsys.readouterr().err
 
 

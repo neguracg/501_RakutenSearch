@@ -1,9 +1,15 @@
-# @owns 検索条件の検査（公開面の Web・MCP と、service・pricing・楽天アダプタが共有）: 語数・1語の長さ・価格・sort・basis・必要量の許可範囲
+# @owns 検索条件の検査（公開面の Web・MCP と、service・pricing・楽天アダプタが共有）: 語数・1語の長さ・1文字の語・価格・sort・basis・必要量の許可範囲
 """入力検査の単一の実装。Web と MCP は guard.Gate.admit() を通してここに来る（ロック取得・
 最小間隔のスリープより前）。弾いた入力は楽天 API の枠を消費しない。
 
 長さは楽天の上限（半角 128 文字）を安全側に解釈し、UTF-8 で 128 バイト以内（全角はおよそ 42 文字。S8）。
 Gate と楽天アダプタは同じ fits_limit() で判定する。メッセージは利用者に見せてよい文言だけ（入力値そのものは入れない）。
+
+1 文字だけの語（WP8-2）: 楽天は keyword・NGKeyword の空白区切りの語が「半角 2 文字以上、または全角 1 文字」を
+求める（公式: https://webservice.rakuten.co.jp/documentation/ichiba-item-search。ただし全角のひらがな・カタカナ・記号は
+2 文字以上）。2026-11-06 の実測では、半角 1 文字（a・2）、全角の数字・英字・かな・カタカナ・長音・記号 1 文字
+（２・Ａ・の・ア・ー・！）は HTTP 400、漢字 1 文字（力）と 2 文字の語は通る。keyword・除外語（NGKeyword）とも同じ。
+全角空白（U+3000）も区切りとして働く。送る前に弾き、語を勝手につなげたり捨てたりはしない（意味が変わる）。
 """
 from __future__ import annotations
 
@@ -26,7 +32,13 @@ WIDTH_TEXT = f"全角{MAX_BYTES // 3}文字（半角{MAX_BYTES}文字）"
 
 
 class InvalidInput(ValueError):
-    """利用者に見せてよい理由を str(exc) に持つ。"""
+    """利用者に見せてよい理由を str(exc) に持つ。kind は結果の error.kind に使う機械可読の種類。"""
+
+    kind = "invalid_request"
+
+
+class KeywordTermTooShort(InvalidInput):
+    kind = "keyword_term_too_short"
 
 
 def fits_limit(text: str) -> bool:
@@ -35,6 +47,28 @@ def fits_limit(text: str) -> bool:
         return len(text.encode("utf-8")) <= MAX_BYTES
     except UnicodeEncodeError:
         return False
+
+
+def _is_ideograph(ch: str) -> bool:
+    """漢字（CJK 統合漢字とその拡張・互換）か。楽天が 1 文字で受け付けるのは漢字だけ（実測）。"""
+    cp = ord(ch)
+    return (0x3400 <= cp <= 0x4DBF or 0x4E00 <= cp <= 0x9FFF or 0xF900 <= cp <= 0xFAFF
+            or 0x20000 <= cp <= 0x3FFFF)
+
+
+def has_too_short_term(text: str) -> bool:
+    """空白（半角・全角）区切りの語に、楽天が受け付けない 1 文字の語（漢字以外の 1 文字）があるか。"""
+    return any(len(t) == 1 and not _is_ideograph(t) for t in text.split())
+
+
+def check_term_lengths(texts, label: str) -> None:
+    """楽天に渡す語（検索語・除外語）の 1 文字だけの語の検査。不正なら KeywordTermTooShort。
+    service・楽天アダプタもここを呼ぶ（公開面の Gate と同じ判定）。texts は文字列または文字列のリスト。"""
+    items = [texts] if isinstance(texts, str) else list(texts or [])
+    if any(isinstance(t, str) and has_too_short_term(t) for t in items):
+        raise KeywordTermTooShort(
+            f"{label}に、楽天で検索できない 1 文字だけの語があります（半角 1 文字、全角の数字・英字・かな・記号 1 文字。"
+            "漢字 1 文字は可）。『DELTA 2』は『DELTA2』のように前の語とつなげるか、語を 2 文字以上にしてください。")
 
 
 def _terms(value, label: str, *, allow_empty: bool) -> list[str]:
@@ -77,6 +111,7 @@ def validate(*, keywords, ng_keyword=None, min_price=None, max_price=None, sort=
              pages=1) -> None:
     """不正なら InvalidInput。正規化後の値は返さない（service が自分で正規化する）。"""
     kws = _terms(keywords, "検索語", allow_empty=False)
+    check_term_lengths(kws, "検索語")
     pages = check_pages(pages)
     if len(kws) * pages > MAX_FETCHES:
         raise InvalidInput(f"検索語の数×ページ数は {MAX_FETCHES} まで（検索語 {len(kws)} 語 × {pages} ページ"
@@ -91,6 +126,7 @@ def validate(*, keywords, ng_keyword=None, min_price=None, max_price=None, sort=
             raise InvalidInput(f"除外語は空白区切りで {MAX_KEYWORDS} 語までです。")
         if not fits_limit(ng_keyword.strip()):
             raise InvalidInput(f"除外語は全体で{WIDTH_TEXT}までです。")
+        check_term_lengths(ng_keyword, "除外語（楽天側）")
     _price(min_price, "価格の下限")
     _price(max_price, "価格の上限")
     if sort not in SORTS:

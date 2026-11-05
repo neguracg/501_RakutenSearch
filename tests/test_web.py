@@ -148,16 +148,16 @@ def test_search_fixed_pages_and_hits():
 def test_multiple_keywords_split_by_newline_and_comma_max_five():
     ad = fake()
     c, _, _ = make_client("", adapter=ad)
-    assert c.get("/search", params={"q": "あ\nい,う、え"}).status_code == 200
-    assert [k for k, _ in ad.calls] == ["あ", "い", "う", "え"]
-    assert c.get("/search", params={"q": "1,2,3,4,5,6"}).status_code == 400
+    assert c.get("/search", params={"q": "あい\nうえ,おか、きく"}).status_code == 200
+    assert [k for k, _ in ad.calls] == ["あい", "うえ", "おか", "きく"]
+    assert c.get("/search", params={"q": "11,22,33,44,55,66"}).status_code == 400
 
 
 @pytest.mark.parametrize("params", [
-    {}, {"q": "  "}, {"q": "x" * 129}, {"q": "あ" * 43}, {"q": "a", "min_price": "abc"},
-    {"q": "a", "max_price": "-5"}, {"q": "a", "ng": "x" * 129}, {"q": "a", "ng": "a b c d e f"},
-    {"q": "a", "min_price": "①②"}, {"q": "a", "max_price": "²"}, {"q": "a", "min_price": "１２３"},
-    {"q": "a", "max_price": "10000001"}, {"q": "a", "max_price": "9" * 5000},
+    {}, {"q": "  "}, {"q": "x" * 129}, {"q": "あ" * 43}, {"q": "aa", "min_price": "abc"},
+    {"q": "aa", "max_price": "-5"}, {"q": "aa", "ng": "x" * 129}, {"q": "aa", "ng": "aa bb cc dd ee ff"},
+    {"q": "aa", "min_price": "①②"}, {"q": "aa", "max_price": "²"}, {"q": "aa", "min_price": "１２３"},
+    {"q": "aa", "max_price": "10000001"}, {"q": "aa", "max_price": "9" * 5000},
 ])
 @pytest.mark.parametrize("path", ["/search", "/compare"])
 def test_invalid_input_is_400_and_does_not_call_api(path, params):
@@ -167,9 +167,9 @@ def test_invalid_input_is_400_and_does_not_call_api(path, params):
     assert ad.calls == [] and ga.api_calls == 0
 
 
-@pytest.mark.parametrize("params", [{"q": "a", "include": "x" * 129}, {"q": "a", "exclude": "a b c d e f"},
-                                    {"q": "a", "basis": "ふしぎ"}, {"q": "a", "basis": "x" * 500},
-                                    {"q": "a", "include": "あ" * 43}])
+@pytest.mark.parametrize("params", [{"q": "aa", "include": "x" * 129}, {"q": "aa", "exclude": "a b c d e f"},
+                                    {"q": "aa", "basis": "ふしぎ"}, {"q": "aa", "basis": "x" * 500},
+                                    {"q": "aa", "include": "あ" * 43}])
 def test_invalid_compare_options_are_400_and_do_not_call_api(params):
     ad = fake()
     c, _, ga = make_client("", adapter=ad)
@@ -190,7 +190,7 @@ def test_rejected_input_does_not_consume_the_ip_budget():
     c, _, _ = make_client("", limiter=RateLimiter(limit=2, clock=clock), clock=clock)
     h = {"CF-Connecting-IP": "203.0.113.50"}
     for _ in range(5):
-        assert c.get("/search", params={"q": "a", "min_price": "abc"}, headers=h).status_code == 400
+        assert c.get("/search", params={"q": "aa", "min_price": "abc"}, headers=h).status_code == 400
         assert c.get("/search", params={"q": "あ" * 43}, headers=h).status_code == 400
     assert c.get("/search", params={"q": "洗濯洗剤"}, headers=h).status_code == 200
     assert c.get("/search", params={"q": "洗濯洗剤"}, headers=h).status_code == 200
@@ -270,7 +270,7 @@ def test_unexpected_exception_is_generic_500_without_detail():
             raise RuntimeError(f"secret {SECRET_KEY}")
 
     c, _, _ = make_client("", adapter=Boom({}))
-    r = c.get("/search?q=a")
+    r = c.get("/search?q=aa")
     assert r.status_code == 500 and SECRET_KEY not in r.text and CREDIT_HTML in r.text
 
 

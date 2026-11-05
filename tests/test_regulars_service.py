@@ -139,8 +139,8 @@ def test_search_products_with_mock_returns_json_ready_dict():
 
 
 def test_search_products_caption_truncated():
-    ad = FakeAdapter({("a", 1): ([make_offer("1", caption="あ" * 500)], 1)})
-    r = service.search_products(["a"], adapter=ad, sleep=lambda s: None)
+    ad = FakeAdapter({("aa", 1): ([make_offer("1", caption="あ" * 500)], 1)})
+    r = service.search_products(["aa"], adapter=ad, sleep=lambda s: None)
     assert len(r["offers"][0]["caption"]) == 200
 
 
@@ -164,27 +164,27 @@ def test_search_products_bad_keywords(kw):
 def test_search_products_over_limit_returns_error_not_exception():
     r = service.search_products([f"k{i}" for i in range(6)], adapter=MockAdapter())
     assert r["ok"] is False and r["error"]["kind"] == "invalid_request"
-    r = service.search_products(["a"], pages=4, adapter=MockAdapter())
+    r = service.search_products(["aa"], pages=4, adapter=MockAdapter())
     assert r["ok"] is False
 
 
 @pytest.mark.parametrize("kind", ["http_403", "http_429", "timeout"])
 def test_all_failed_reports_kind(kind):
-    ad = FakeAdapter({("a", 1): AdapterError(kind)})
-    r = service.search_products(["a"], adapter=ad, sleep=lambda s: None)
+    ad = FakeAdapter({("aa", 1): AdapterError(kind)})
+    r = service.search_products(["aa"], adapter=ad, sleep=lambda s: None)
     assert r["ok"] is False and r["error"]["kind"] == kind
     assert r["stats"]["per_keyword"][0]["error"] == kind
 
 
 def test_partial_failure_still_ok_with_note():
-    ad = FakeAdapter({("a", 1): AdapterError("timeout"), ("b", 1): ([make_offer("1")], 1)})
-    r = service.search_products(["a", "b"], adapter=ad, sleep=lambda s: None)
+    ad = FakeAdapter({("aa", 1): AdapterError("timeout"), ("bb", 1): ([make_offer("1")], 1)})
+    r = service.search_products(["aa", "bb"], adapter=ad, sleep=lambda s: None)
     assert r["ok"] and r["returned"] == 1 and any("timeout" in n for n in r["notes"])
 
 
 def test_429_partial_notes_rate_limit():
-    ad = FakeAdapter({("a", 1): ([make_offer("1")], 1), ("b", 1): AdapterError("http_429")})
-    r = service.search_products(["a", "b", "c"], adapter=ad, sleep=lambda s: None)
+    ad = FakeAdapter({("aa", 1): ([make_offer("1")], 1), ("bb", 1): AdapterError("http_429")})
+    r = service.search_products(["aa", "bb", "cc"], adapter=ad, sleep=lambda s: None)
     assert r["ok"] and r["stats"]["stopped_reason"] == "rate_limited"
     assert any("429" in n for n in r["notes"])
 
@@ -192,7 +192,7 @@ def test_429_partial_notes_rate_limit():
 def test_missing_credentials_surfaces_as_error(monkeypatch, tmp_path):
     monkeypatch.delenv("SHOPPING_MOCK", raising=False)
     ad = service.make_adapter(mock=False, credentials=RakutenCredentials("", ""))
-    r = service.search_products(["a"], adapter=ad)
+    r = service.search_products(["aa"], adapter=ad)
     assert r["ok"] is False and r["error"]["kind"] == "missing_credentials"
 
 
@@ -301,16 +301,16 @@ def test_no_credentials_in_any_output(monkeypatch):
     from fakes import FakeOpener, http_error
     from shopping.adapters.rakuten import RakutenAdapter
     ad = RakutenAdapter(fake_id, fake_key, opener=FakeOpener(http_error(403)))
-    r = service.search_products(["a"], adapter=ad, sleep=lambda s: None)
+    r = service.search_products(["aa"], adapter=ad, sleep=lambda s: None)
     blob = json.dumps(r, ensure_ascii=False)
     assert fake_id not in blob and fake_key not in blob and "SECRET" not in blob
 
 
 def test_search_products_default_max_results_returns_everything_fetched():
     # 既定（None）は取得した全件（語数×pages×30 が上限）。30 件で黙って切らない
-    pages = {("a", p): ([make_offer(f"a{p}-{i}") for i in range(30)], 90) for p in (1, 2, 3)}
-    r = service.search_products(["a"], adapter=FakeAdapter(pages), pages=3, sleep=lambda s: None)
+    pages = {("aa", p): ([make_offer(f"a{p}-{i}") for i in range(30)], 90) for p in (1, 2, 3)}
+    r = service.search_products(["aa"], adapter=FakeAdapter(pages), pages=3, sleep=lambda s: None)
     assert r["returned"] == 90 and not any("max_results" in n for n in r["notes"])
-    r = service.search_products(["a"], adapter=FakeAdapter(pages), pages=3, max_results=0,
+    r = service.search_products(["aa"], adapter=FakeAdapter(pages), pages=3, max_results=0,
                                 sleep=lambda s: None)
     assert r["returned"] == 0 and any("max_results" in n for n in r["notes"])
