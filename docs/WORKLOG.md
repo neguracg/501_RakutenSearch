@@ -26,3 +26,4 @@
 - 2026-11-05 WP2-3: 公開Web(web.py/web_view.py/guard.py=直列化1秒・10分キャッシュ・IP別20回/分の共通層)・Dockerfile/compose/.dockerignore・requirements追加(docker未実行, .env.example は権限で作成不可) / pytest 373 passed
 - 2026-11-05 WP2-4: docs/index.html に公開URL・クレジット・運営者表示、README に Web 起動方法/本番URL/Docker / pytest 373 passed
 - 2026-11-05 WP2-5: 公開リモートMCP {BASE}/mcp(stateless・JSON・2ツール・credit必須・guard共有)・credit.py・SPEC §10/§11/AC-W9・README(ChatGPT登録手順)・指示書更新 / pytest 384 passed
+- 2026-11-05 WP3-0: 汎用化に伴い旧ブラインド(TP専用)を退役、汎用ブラインド test_blind_generic_quantity.py を固定 / 130件
