@@ -44,3 +44,4 @@
 - 2026-11-05 WP5-2: SPEC §7 に P0〜P4・X1〜X5・S/W の整理・AC-Q1 を追記、BUGLOG A1 追記と A1′・A2(!重) / pytest 1600 passed（ブラインド 416/416・コーパス 誤り0/不明22）
 - 2026-11-05 WP5-3: B(S5 比べた次元 unit_price_dimension・content_amounts を結果に)・C1(単価の桁数を quantity.unit_price_digits に一本化)・C3(regulars の desired_quantity を inputs 検査へ)・C2(HANDOFF 同期)・SPEC 追記 / pytest 1612 passed（ブラインド 416/416・コーパス 誤り0/不明22）
 - 2026-11-05 WP6-1: quantity.py に P5(数え語の直後の境界を1関数に・個別除外リスト撤去)・P6(連結位置で捨てる時は low・連結P/計量値直後Pは上限99を掛けない)・P7(量・個数に空白で続くカタカナ未知語は low)、単価の丸めを pricing.py へ移管、AC-Q1 を343件へ、SPEC §7 に P5〜P7 / pytest 1780 passed（ブラインド 416/416・コーパス343 誤り0/不明44）
+- 2026-11-05 WP6-2: BUGLOG A3(恒久化: P5 ホワイトリスト化)・HANDOFF 同期・plans/WP5_fixexp_quantity.diff 先頭2行(ローカルパス)削除・tests/corpus/run_set.py の import を title_patterns へ / pytest 1780 passed（ブラインド 416/416・コーパス343 誤り0/不明44）

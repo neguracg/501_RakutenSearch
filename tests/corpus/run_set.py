@@ -3,7 +3,7 @@ src, outp = sys.argv[1], sys.argv[2]
 sys.path.insert(0, src)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shopping.quantity import parse_quantity
-import patterns
+import title_patterns as patterns
 out = []
 for title, truth in patterns.P:
     try:
