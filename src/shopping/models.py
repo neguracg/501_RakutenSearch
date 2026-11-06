@@ -54,6 +54,9 @@ class Offer:
     # 単位価格に使った量の次元（count / volume / mass …）。basis を明示した時、名前に複数の次元があっても
     # どれで比べたかが分かる（S5）。単価を出せない候補は None
     unit_price_dimension: str | None = None
+    # 単位価格が同じ比較グループの中央値の 1/10 未満（数量の読み違いの疑い。WP10）。比較が書き込む。
+    # True の候補は単位価格の最安・必要数量を満たす最安に選ばれない（候補一覧には残す）
+    unit_price_outlier: bool = False
 
 
 @dataclass

@@ -71,3 +71,4 @@
 - 2026-11-06 WP9-3: 自己点検の反映（SPEC R6 を R5 の後ろへ・販促の + 追記も low になる旨、BUGLOG A6 に 恒久化:暫定 を追記）
 - 2026-11-06 WP9-4: verifier B8 対応（E1 は単独の内容量だけ low、鎖の一部の量と個数は掛けない。PET500ml 500ml×24本 等10件を high に戻し corpus unseen6 に固定）・C1/C2（SPEC R6 に例を追記）/ コーパス421 不明77=18.3% 誤り0・既存407件不変・pytest 2892・ブラインド 416/416
 - 2026-11-06 02:23 本番反映（WP9）: 011b876 を deploy_app.sh kaimono で反映（STATE=OK・healthy・healthz 200）。本番コンテナで 80L…ICBK80L・本体+バッテリ2個+充電器 が low、PET500ml 500ml×24本 が 24本 high、【48本】…48本 2ケース が low を実測。worktree wp9-ex-highs は撤去済み
+- 2026-11-06 02:30 worktree wp10-outlier を残す: WP10（単価の外れ値の網）を implementer が実装中。完了・verifier レビュー後に master へ合流して撤去する

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from statistics import median
 from dataclasses import dataclass, field
 
 from .inputs import check_desired_quantity
@@ -12,6 +13,13 @@ from .quantity import DISPLAY, _norm, base_unit, format_amount, parse_quantity, 
 
 SPEC_CAVEAT = "仕様の違い（濃縮・層数・型番・色など）は判定していません。商品名で確認してください。"
 QUANTITY_CAVEAT = "数量は商品名からの読み取りで、誤ることがあります。購入前に商品ページで確認してください。"
+
+# 単価の外れ値（WP10。SPEC §8）。単位価格が出ている候補が OUTLIER_MIN_GROUP 件以上ある時だけ、単位価格の中央値の
+# 1/OUTLIER_RATIO 未満の候補を「数量の読み違いの疑い」として単位価格の最安・必要数量を満たす最安から外す。
+# 値の根拠は SPEC §8 の注（実 API 99 検索・1429 件の実測表）。
+OUTLIER_MIN_GROUP = 5
+OUTLIER_RATIO = 10
+OUTLIER_NOTE = "単価が他の候補と桁違いに安い。数量の読み違いの疑い。商品ページで確認"
 
 
 def unit_price_digits(x: float) -> int:
@@ -162,6 +170,20 @@ def _auto_basis(offers: list[Offer]) -> tuple[str, str]:
     return "個", "count"
 
 
+def mark_unit_price_outliers(members: list[Offer]) -> list[Offer]:
+    """単位価格が出ている候補（同じ比較グループ）のうち、中央値の 1/OUTLIER_RATIO 未満のものに
+    unit_price_outlier を立てて返す。件数が OUTLIER_MIN_GROUP 未満なら何もしない。判定の実装はここだけ
+    （表示側は印を出すだけ）。高すぎる側は最安の誤りにならないので扱わない。"""
+    ranked = [o for o in members if o.unit_price is not None and not o.unit_price_outlier]
+    if len(ranked) < OUTLIER_MIN_GROUP:
+        return []
+    limit = median(o.unit_price for o in ranked) / OUTLIER_RATIO
+    flagged = [o for o in ranked if o.unit_price < limit]
+    for o in flagged:
+        o.unit_price_outlier = True
+    return flagged
+
+
 def compare(offers: list[Offer], include_terms=None, exclude_terms=None,
             desired_quantity=None, basis: str | None = None) -> Comparison:
     check_desired_quantity(desired_quantity)       # 検査の実装は inputs に一本化（不正なら InvalidInput＝ValueError）
@@ -179,6 +201,7 @@ def compare(offers: list[Offer], include_terms=None, exclude_terms=None,
         o.unit_price = None
         o.unit_price_label = None
         o.unit_price_dimension = None
+        o.unit_price_outlier = False
 
     name, dim = fixed if fixed else _auto_basis(candidates)
     mult, label = DISPLAY[dim]
@@ -199,6 +222,7 @@ def compare(offers: list[Offer], include_terms=None, exclude_terms=None,
         members.append(o)
     members.sort(key=lambda o: (o.unit_price is None, o.unit_price or 0.0,
                                 o.price if o.price is not None else 10**12, o.mall_item_code))
+    outliers = mark_unit_price_outliers(members)
     groups = [ComparisonGroup(basis=name, dimension=dim, offers=members)] if members else []
 
     priced = [o for o in candidates if o.price is not None]
@@ -209,9 +233,12 @@ def compare(offers: list[Offer], include_terms=None, exclude_terms=None,
     if unknown:
         caveats.append(f"単価を出せない候補: {len(unknown)}件（比べる単位 {name} の量を商品名から"
                        "確定できないため、単位価格の最安の判定から外した）")
+    if outliers:
+        caveats.append(f"単価が他の候補の 1/{OUTLIER_RATIO} 未満で、数量の読み違いの疑いがある候補: "
+                       f"{len(outliers)}件（単位価格の最安・必要数量を満たす最安から外しています）")
 
     cheapest_price = min(priced, key=lambda o: (o.price, o.mall_item_code)) if priced else None
-    ranked = [o for o in members if o.unit_price is not None]
+    ranked = [o for o in members if o.unit_price is not None and not o.unit_price_outlier]
     cheapest_unit = min(ranked, key=lambda o: (o.unit_price, o.price, o.mall_item_code)) \
         if ranked else None
 
@@ -226,13 +253,16 @@ def compare(offers: list[Offer], include_terms=None, exclude_terms=None,
 
     meeting = None
     if desired_quantity is not None:
-        ok = [o for o in members if o.price is not None and amounts[id(o)] >= desired_quantity]
+        ok = [o for o in members if o.price is not None and not o.unit_price_outlier
+              and amounts[id(o)] >= desired_quantity]
         if ok:
             meeting = min(ok, key=lambda o: (o.price, o.unit_price, o.mall_item_code))
             if total_price(meeting) is None:
                 caveats.append("必要数量を満たす最安は商品価格ベースで、送料は含まない（送料不明）")
         else:
-            caveats.append(f"必要数量 {format_amount(desired_quantity)}{name} 以上を満たす候補がない")
+            excluded = any(o.unit_price_outlier and amounts[id(o)] >= desired_quantity for o in members)
+            caveats.append(f"必要数量 {format_amount(desired_quantity)}{name} 以上を満たす候補がない"
+                           + ("（数量の読み違いの疑いで外した候補を除く）" if excluded else ""))
         if unknown:
             caveats.append("量を読み取れない候補は必要数量の判定に使っていない")
 
