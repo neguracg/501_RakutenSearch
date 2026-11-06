@@ -16,8 +16,8 @@ QUANTITY_CAVEAT = "数量は商品名からの読み取りで、誤ることが�
 
 # 単価の外れ値（WP10。SPEC §8）。単位価格が出ている候補が OUTLIER_MIN_GROUP 件以上ある時だけ、単位価格の中央値の
 # 1/OUTLIER_RATIO 未満の候補を「数量の読み違いの疑い」として単位価格の最安・必要数量を満たす最安から外す。
-# 値の根拠は SPEC §8 の注（実 API 99 検索・1429 件の実測表）。
-OUTLIER_MIN_GROUP = 5
+# 値（N=4・K=10）の根拠は SPEC §8「単価の外れ値の N・K」（実 API 99 検索・1429 件の実測表）。
+OUTLIER_MIN_GROUP = 4
 OUTLIER_RATIO = 10
 OUTLIER_NOTE = "単価が他の候補と桁違いに安い。数量の読み違いの疑い。商品ページで確認"
 

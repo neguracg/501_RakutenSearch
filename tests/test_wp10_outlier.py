@@ -2,7 +2,7 @@
 """WP10: 単位価格が同じ比較グループの中央値の 1/10 未満の候補を「要確認」にして、単位価格の最安・必要数量を満たす最安から外す。
 
 判定は pricing.py に 1 つだけ。公開Web・公開MCP・CLI は印（unit_price_outlier）を出すだけ。
-N=5・K=10 の根拠は SPEC §8 の注（実 API 99 検索・1429 件の実測表）。
+N=4・K=10 の根拠は SPEC §8 の注（実 API 99 検索・1429 件の実測表）。
 """
 import re
 
@@ -32,20 +32,20 @@ def flagged(offers):
 
 
 def test_constants_are_the_measured_values():
-    assert (OUTLIER_MIN_GROUP, OUTLIER_RATIO) == (5, 10)
+    assert (OUTLIER_MIN_GROUP, OUTLIER_RATIO) == (4, 10)
 
 
 # --- 判定（N・K・向き） -----------------------------------------------------------
 
 def test_group_smaller_than_n_is_never_flagged():
-    offers = [mk("a", 1000), mk("b", 1000), mk("c", 1000), mk("d", 1)]       # 4 件
+    offers = [mk("a", 1000), mk("b", 1000), mk("d", 1)]       # 3 件
     r = compare(offers)
     assert flagged(offers) == [] and r.cheapest_unit_price.mall_item_code == "d"
     assert not any("読み違い" in c for c in r.caveats)
 
 
 def test_group_of_exactly_n_is_judged():
-    offers = [mk("a", 1000), mk("b", 1000), mk("c", 1000), mk("d", 1000), mk("e", 99)]   # 5 件
+    offers = [mk("a", 1000), mk("b", 1000), mk("c", 1000), mk("e", 99)]   # 4 件
     r = compare(offers)
     assert flagged(offers) == ["e"] and r.cheapest_unit_price.mall_item_code != "e"
 
@@ -63,9 +63,9 @@ def test_expensive_side_is_not_flagged():
 
 
 def test_members_without_unit_price_do_not_count_toward_n():
-    offers = [mk("a", 1000), mk("b", 1000), mk("c", 1000), mk("d", 1), make_offer("np", "水 np", price=None)]
+    offers = [mk("a", 1000), mk("b", 1000), mk("d", 1), make_offer("np", "水 np", price=None)]
     offers[-1].quantity = offers[0].quantity
-    r = compare(offers)                           # 単価の出る候補は 4 件（価格不明の 1 件は数えない）
+    r = compare(offers)                           # 単価の出る候補は 3 件（価格不明の 1 件は数えない）
     assert flagged(offers) == [] and r.cheapest_unit_price.mall_item_code == "d"
 
 
